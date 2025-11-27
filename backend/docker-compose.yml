@@ -1,0 +1,18 @@
+services:
+  manim-api:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./renders:/app/renders
+      - ./app:/app/app
+    environment:
+      - RENDER_DIR=/app/renders
+    env_file:
+      - .env
+    restart: unless-stopped
+
+volumes:
+  renders:
