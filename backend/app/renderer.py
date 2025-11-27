@@ -60,12 +60,12 @@ def run_manim(code: str, temp_dir: str, quality: str = "m") -> tuple[bool, str]:
 
         try:
             process = subprocess.run(
-                cmd, capture_output=True, text=True, check=False, timeout=240
+                cmd, capture_output=True, text=True, check=False, timeout=settings.MANIM_TIMEOUT
             )
 
         except subprocess.TimeoutExpired:
-            logger.error("Manim rendering timed out after 240 seconds")
-            return False, "Rendering timed out after 240 seconds"
+            logger.error(f"Manim rendering timed out after {settings.MANIM_TIMEOUT} seconds")
+            return False, f"Rendering timed out after {settings.MANIM_TIMEOUT} seconds"
 
         logger.info(f"Manim stdout: {process.stdout}")
         logger.error(f"Manim stderr: {process.stderr}")
