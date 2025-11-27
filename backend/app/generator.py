@@ -16,13 +16,13 @@ logger = logging.getLogger(__name__)
 
 embedding = GoogleGenerativeAIEmbeddings(
     model="models/embedding-001",
-    google_api_key=settings.GOOGLE_API_KEY,
+    google_api_key=settings.GEMINI_API_KEY,
 )
 
 chat = ChatGoogleGenerativeAI(
     model="gemini-2.5-flash",
     verbose=True,
-    google_api_key=settings.GOOGLE_API_KEY
+    google_api_key=settings.GEMINI_API_KEY
 )
 
 chat_history = []

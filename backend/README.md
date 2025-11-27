@@ -44,7 +44,6 @@ SUPABASE_BUCKET=your_bucket_name
 
 # API Keys
 GEMINI_API_KEY=your_gemini_key
-GOOGLE_API_KEY=your_google_key
 PINECONE_API_KEY=your_pinecone_key
 PINECONE_INDEX_NAME=your_index_name
 

@@ -14,7 +14,7 @@ from pydantic import SecretStr
 load_dotenv()
 embedding = GoogleGenerativeAIEmbeddings(
     model="models/embedding-001",
-    google_api_key=SecretStr(settings.GOOGLE_API_KEY) if settings.GOOGLE_API_KEY else None,
+    google_api_key=SecretStr(settings.GEMINI_API_KEY) if settings.GEMINI_API_KEY else None,
 )
 
 

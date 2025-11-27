@@ -14,7 +14,6 @@ class Settings(BaseSettings):
     SUPABASE_KEY: Optional[str] = os.getenv("SUPABASE_KEY")
     SUPABASE_BUCKET: Optional[str] = os.getenv("SUPABASE_BUCKET")
     GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
-    GOOGLE_API_KEY: Optional[str] = os.getenv("GOOGLE_API_KEY")
     MANIM_QUALITY: Optional[str] = "m"
     PINECONE_API_KEY: Optional[str] = os.getenv("PINECONE_API_KEY")
     PINECONE_INDEX_NAME: Optional[str] = os.getenv("PINECONE_INDEX_NAME")
