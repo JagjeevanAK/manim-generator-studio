@@ -37,8 +37,8 @@ export default function Home() {
 
       {/* Features Grid */}
       <section className="py-24 px-4">
-        <div className="max-w-6xl mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12">
+        <div className="max-w-5xl mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-16">
             <div className="space-y-4 group">
               <div className="h-12 w-12 rounded-2xl bg-primary/5 flex items-center justify-center group-hover:bg-primary/10 transition-colors duration-300">
                 <Sparkles className="h-6 w-6 text-primary" />

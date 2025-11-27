@@ -87,7 +87,7 @@ export default function GenerationForm() {
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Describe a mathematical concept to visualize... (e.g. 'Show a rotating 3D cube with glowing edges')"
+          placeholder="Describe a mathematical concept to visualize..."
           className="w-full bg-transparent border-none focus:ring-0 focus:outline-none focus-visible:ring-0 focus-visible:outline-none resize-none p-6 min-h-[120px] text-lg placeholder:text-muted-foreground/50 leading-relaxed"
           disabled={isLoading}
         />
