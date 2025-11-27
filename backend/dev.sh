@@ -119,6 +119,7 @@ help() {
     echo "  run            - Run the development server"
     echo "  docker-run     - Build and run with Docker"
     echo "  docker-stop    - Stop Docker containers"
+    echo "  db-setup       - Show instructions for Supabase database setup"
     echo "  install <pkg>  - Install a new package"
     echo "  clean          - Clean up generated files"
     echo "  help           - Show this help message"
@@ -138,6 +139,18 @@ case "$1" in
         ;;
     docker-stop)
         docker_stop
+        ;;
+    db-setup)
+        echo "Supabase Database Setup Instructions:"
+        echo "-------------------------------------"
+        echo "1. Go to your Supabase Project Dashboard"
+        echo "2. Open the SQL Editor"
+        echo "3. Run the following SQL commands (from supabase_schema.sql):"
+        echo ""
+        cat supabase_schema.sql
+        echo ""
+        echo "-------------------------------------"
+        echo "Copy the SQL above and run it in your Supabase SQL Editor."
         ;;
     install)
         install "$2"
