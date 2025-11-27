@@ -79,9 +79,9 @@ def generate_manim_code(prompt: str) -> str:
 
         retriever = doc_search.as_retriever()
 
-        docs_original = retriever.get_relevant_documents(prompt)
+        docs_original = retriever.invoke(prompt)
 
-        docs_enhanced = retriever.get_relevant_documents(enhanced_query)
+        docs_enhanced = retriever.invoke(enhanced_query)
 
         all_docs = docs_original + docs_enhanced
         unique_docs = []
@@ -237,7 +237,7 @@ def generate_code_with_history(conversation_history):
         )
 
         retriever = doc_search.as_retriever()
-        docs = retriever.get_relevant_documents(original_prompt)
+        docs = retriever.invoke(original_prompt)
 
         doc_contents = [doc.page_content for doc in docs[:5]]
         context_text = "\n\n---\n\n".join(doc_contents)

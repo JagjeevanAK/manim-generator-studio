@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api"
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
 export async function generateManimVisualization(prompt: string, quality: string) {
   const response = await fetch(`${API_BASE_URL}/api/manim/generate`, {
