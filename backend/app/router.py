@@ -73,12 +73,14 @@ def get_status(job_id: str):
 
     supabase_response = get_job_status(job_id)
 
-    if supabase_response:
+    if supabase_response and isinstance(supabase_response, dict):
+        url = supabase_response.get("url")
+        message = supabase_response.get("message")
         return GenerateResponse(
             job_id=job_id,
-            status=supabase_response["status"],
-            message=supabase_response.get("message") or "",
-            output_path=supabase_response.get("url"),
+            status=str(supabase_response["status"]),
+            message=str(message) if message is not None else "",
+            output_path=url if isinstance(url, str) else None,
         )
 
     job_dir = os.path.join(RENDER_DIR, job_id)

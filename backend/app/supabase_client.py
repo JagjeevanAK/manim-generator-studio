@@ -11,6 +11,9 @@ SUPABASE_URL = settings.SUPABASE_URL
 SUPABASE_KEY = settings.SUPABASE_KEY
 SUPABASE_BUCKET = settings.SUPABASE_BUCKET
 
+if not SUPABASE_URL or not SUPABASE_KEY or not SUPABASE_BUCKET:
+    raise ValueError("SUPABASE_URL, SUPABASE_BUCKET and SUPABASE_KEY must be set in environment variables")
+
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
@@ -164,7 +167,7 @@ def delete_job_data(job_id: str):
 
         if job_data and "url" in job_data:
             url_parts = job_data["url"].split("/")
-            if len(url_parts) > 0:
+            if len(url_parts) > 0 and SUPABASE_BUCKET:
                 file_path = url_parts[-1]
                 try:
                     supabase.storage.from_(SUPABASE_BUCKET).remove(

@@ -154,7 +154,7 @@ def process_rendering_job(job_id: str, prompt: str, quality: str):
 
         try:
 
-            success, result = run_manim(final_code, temp_iter_dir, quality)
+            success, result = run_manim(str(final_code), temp_iter_dir, quality)
 
             if success:
                 logger.info(f"Successful render on iteration {iteration}")
@@ -193,10 +193,10 @@ Please fix the code to address this error. Only respond with the complete, corre
                         with open(
                             os.path.join(job_dir, f"code_iter_{iteration}.py"), "w"
                         ) as f:
-                            f.write(final_code)
+                            f.write(str(final_code))
 
                         with open(code_path, "w") as f:
-                            f.write(final_code)
+                            f.write(str(final_code))
 
                         logger.info(f"Generated improved code in iteration {iteration}")
                     except Exception as e:
