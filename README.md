@@ -21,6 +21,7 @@ graph TD
         Gemini["Google Gemini AI"]
         Pinecone["Pinecone Vector DB"]
         Supabase["Supabase DB"]
+        Storage["Video Storage"]
     end
 
     UI -->|Generate Request| API
@@ -33,7 +34,7 @@ graph TD
     Gen -->|Generate Code| Gemini
     Gen -->|Code| Render
     
-    Render -->|Render Video| Storage["Video Storage"]
+    Render -->|Render Video| Storage
     Render -->|Update Status| Supabase
     
     Ingest -->|Embed Docs| Pinecone
