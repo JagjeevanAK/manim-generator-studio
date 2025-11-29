@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     SUPABASE_KEY: Optional[str] = os.getenv("SUPABASE_KEY")
     SUPABASE_BUCKET: Optional[str] = os.getenv("SUPABASE_BUCKET")
     GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
+    COHERE_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
     MANIM_QUALITY: Optional[str] = "m"
     MANIM_TIMEOUT: int = int(os.getenv("MANIM_TIMEOUT", "600"))
     PINECONE_API_KEY: Optional[str] = os.getenv("PINECONE_API_KEY")
