@@ -21,7 +21,8 @@ class Settings(BaseSettings):
     LANGCHAIN_API_KEY: Optional[str] = os.getenv("LANGCHAIN_API_KEY")
     LANGCHAIN_TRACING_V2: Optional[str] = os.getenv("LANGCHAIN_TRACING_V2")
     LANGCHAIN_PROJECT: Optional[str] = os.getenv("LANGCHAIN_PROJECT")
-
+    CARTESIA_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
+    
     class Config:
         env_file = ".env"
         case_sensitive = True

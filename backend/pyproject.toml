@@ -21,6 +21,7 @@ dependencies = [
     "langchain>=1.1.0",
     "langchain-text-splitters>=1.0.0",
     "langchain-cohere>=0.5.0",
+    "cartesia"
 ]
 
 [build-system]
