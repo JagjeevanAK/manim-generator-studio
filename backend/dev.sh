@@ -56,7 +56,7 @@ setup() {
     # Install System Dependencies (Linux Only)
     if command -v apt-get &> /dev/null; then
         print_message "Detected Linux. Installing system libraries for Manim..."
-        sudo apt-get update && sudo apt-get install -y libcairo2-dev libpango1.0-dev ffmpeg pkg-config
+        sudo apt-get update && sudo apt-get install -y libcairo2-dev libpango1.0-dev ffmpeg pkg-config 
     else
         print_warning "Not on Linux/Debian. Skipping apt-get. Ensure Manim dependencies are installed manually."
     fi
