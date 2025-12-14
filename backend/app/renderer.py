@@ -15,8 +15,10 @@ from langchain_core.prompts import (
     SystemMessagePromptTemplate,
     HumanMessagePromptTemplate,
 )
-import math
+from io import BytesIO
 import wave
+import math
+from pydub import AudioSegment
 import re
 import json
 import math
@@ -24,6 +26,7 @@ from cartesia import Cartesia,AsyncCartesia
 import asyncio
 from pydantic import BaseModel, Field
 from typing import List,Optional
+import ffmpeg
 
 
 class TranscriptPhase(BaseModel):
@@ -481,7 +484,14 @@ async def process_rendering_job(job_id: str, prompt: str, quality: str):
     cnt=0
 
     phasewise_transcripts=tts_final_transcript.phasewise_transcripts
+
+    local_audio_files_name="temp"
+    final_audio_filename=local_audio_files_name+'_final.wav'
+    combined = AudioSegment.silent(duration=0)  # start empty
+
     for transcript in phasewise_transcripts:
+        #########################
+
         chunks = cartesia_client.tts.bytes(
             model_id="sonic-3",
             transcript=transcript,
@@ -493,41 +503,57 @@ async def process_rendering_job(job_id: str, prompt: str, quality: str):
                 "encoding": "pcm_s16le"
                 }
         )
-        filename = f"audio_{cnt}.wav"
+
+        filename = f"{local_audio_files_name}_{cnt}.wav"
 
         with open(filename, "wb") as f:
             for chunk in chunks:
                 f.write(chunk)
 
-        with wave.open(filename, 'rb') as audio_file:
-            frames = audio_file.getnframes()
-            rate = audio_file.getframerate()  # Should be 44100
-            original_time = frames / float(rate)
-            floored_time=math.ceil(original_time)
-            silence_time=floored_time-original_time
-            phases[cnt].duration_seconds = floored_time
+        sample_rate=44100
+        audio_seg_tts = AudioSegment.from_file(filename)
+        duration_seconds = len(audio_seg_tts) / 1000.0  # milliseconds to seconds
+        floored_time = math.ceil(duration_seconds)
+        phases[cnt].duration_seconds=floored_time
+        silence_time_sec = floored_time-duration_seconds
 
-            params = audio_file.getparams()
-            audio_frames = audio_file.readframes(frames)
+        print(f"{filename}: {duration_seconds:.2f} seconds")  # Real duration![web:29]
 
-        silence_seconds = silence_time  # example
-        silence_frames = int(rate * silence_seconds)
+        silence_time_ms = int(silence_time_sec * 1000)
+        silence_seg = AudioSegment.silent(duration=silence_time_ms, frame_rate=sample_rate)
+        combined += audio_seg_tts + silence_seg
+        print(f"{filename}: {duration_seconds:.2f} seconds")
+        cnt += 1
 
-        sample_width = params.sampwidth
-        channels = params.nchannels
-
-        # silence = zeros
-        silence_data = b'\x00' * silence_frames * sample_width * channels
-
-        with wave.open(filename, 'wb') as out:
-            out.setparams(params)
-            out.writeframes(audio_frames)
-            out.writeframes(silence_data)
-        cnt+=1
-
+    combined.export(final_audio_filename, format="wav")
+    print("Final audio saved as:", final_audio_filename)
     print(f'phases now : {phases}')
-    print('STOPPING HERE')
-    return
+
+    # #concatenating all phases audio
+    # frames_all = []
+    # params_ref = None
+
+    # for i in range(cnt):
+    #     fname = f"{local_audio_files_name}_{i}.wav"
+    #     if not os.path.exists(fname):
+    #         raise FileNotFoundError(fname)
+
+    #     with wave.open(fname, 'rb') as wf:
+    #         if params_ref is None:
+    #             params_ref = wf.getparams()
+    #         else:
+    #             if wf.getparams()[:3] != params_ref[:3]:
+    #                 raise ValueError(f"Audio format mismatch in {fname}")
+
+    #         frames_all.append(wf.readframes(wf.getnframes()))
+
+    # with wave.open(final_audio_filename, 'wb') as out:
+    #     out.setparams(params_ref)
+    #     for frames in frames_all:
+            # out.writeframes(frames)
+
+    # print('STOPPING HERE')
+    # return
     #
    
     # 5. PASS TO MANIM GENERATOR
@@ -634,7 +660,26 @@ async def process_rendering_job(job_id: str, prompt: str, quality: str):
     if success:
         try:
             video_full_path = os.path.join(RENDER_DIR, result)
-            supabase_url = upload_to_supabase(job_id, video_full_path, final_code)
+            final_video_with_audio = os.path.join(RENDER_DIR, "final_with_audio.mp4")
+            input_video = ffmpeg.input(video_full_path)
+            input_audio = ffmpeg.input(final_audio_filename)
+            
+            (
+                ffmpeg
+                .output(
+                    input_video,
+                    input_audio,
+                    final_video_with_audio,
+                    vcodec="copy",   # do not re-encode video
+                    acodec="aac",    # encode audio to AAC for mp4 container
+                    strict="experimental"
+                )
+                .overwrite_output()
+                .run()
+            )
+
+            # now upload final_video_with_audio to Supabase
+            supabase_url = upload_to_supabase(job_id, final_video_with_audio, final_code)
 
             update_job_data(
                 job_id=job_id,

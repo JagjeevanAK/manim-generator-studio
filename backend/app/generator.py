@@ -58,7 +58,7 @@ def extract_python_code(text: str) -> str:
     return matches[0] if matches else text
 
 
-def generate_manim_code(prompt: str,manim_synchronized_transcript:str,timestamps:list) -> str:
+def generate_manim_code(prompt: str,phases:list[any],timestamps:list) -> str:
     """Generate Manim code using Cohere model with improved retrieval context."""
     add_message_to_history(HumanMessage(content=prompt))
 
@@ -135,63 +135,357 @@ def generate_manim_code(prompt: str,manim_synchronized_transcript:str,timestamps
         logger.info(f"Retrieved {len(unique_docs)} unique relevant documents")
 
         manim_code_generator_system_prompt = """
-            You are an elite Manim Python Developer. 
-            Your goal is to convert a structured JSON `scene_plan` into a fully functional, crash-free `Scene` class.
+        You are an **Elite Audio-Synchronized Manim Developer**.
 
-            ### INPUT DATA
-            You will receive a JSON list called `scene_plan`. Each item represents a phase of the video:
-            - `visual_instruction`: The specific shape, text, or diagram to draw.
-            - `animation_type`: The suggested Manim animation class (e.g., Create, Write, Transform, Flash).
+        Your mission: Generate a single, complete Manim `Scene` class that perfectly synchronizes with pre-rendered audio phases.
 
-            ### CORE RESPONSIBILITIES
-            1.  **Iterate:** Write code for Phase 1, then Phase 2, etc., following the JSON order.
-            2.  **Timing:** At the end of *every* phase, insert `self.wait(2)` (or `self.wait(3)` for complex animations).
-            3.  **Variable Management:** Give variables descriptive names (e.g., `triangle`, `label_a`). Use `VGroup` to group related items (e.g., `box_group = VGroup(box, label)`).
+        ---
 
-            ### VISUAL STYLE & LAYOUT RULES (CRITICAL)
-            1.  **Container Style (The "Ghost" Fix):** - All `Rectangle`, `Circle`, `Square` acting as containers must have `fill_color=BLACK`, `fill_opacity=1`, and a colored `stroke_color`.
-                - This prevents arrows from showing through them.
-            2.  **Labeling (The "Collision" Fix):** - Place labels **OUTSIDE** shapes (e.g., `.next_to(box, UP)`).
-                - **STACKING:** If adding a second label (like a data value) above a box that already has a title, stack it relative to the **TITLE**, not the box.
-                - *Example:* `val_text.next_to(title_text, UP, buff=0.2)`
-            3.  **Flow & Positioning:**
-                - Use Left-to-Right flow.
-                - **NEVER** use `move_to(previous_obj.get_center())` for a new step (this causes overlap).
-                - **ALWAYS** use `next_to(previous_group, RIGHT, buff=1.5)`.
+        ## 🎯 CRITICAL CONTEXT: AUDIO-FIRST ARCHITECTURE
 
-            ### TRANSLATION LOGIC (INTERPRETING THE JSON)
-            - **"Grid" or "Tiles":** Use two nested `for` loops to create small squares, add them to a `VGroup`, and arrange them.
-            - **"Paintbrush" / "Fill":** Manim has no brush. Interpret this as animating the `fill_opacity` from 0 to 1 (e.g., `rect.animate.set_fill(BLUE, opacity=0.5)`).
-            - **"Highlight":** Use `Indicate(mobject)` or `Circumscribe(mobject)`.
-            - **"Dashed Line":** Use `DashedLine(start, end)`.
+        **THE AUDIO IS ALREADY RENDERED.** Each phase has a corresponding audio file with an EXACT duration in seconds.
+        Your generated animations MUST match these durations PRECISELY. No guessing, no approximations.
 
-            ### SYNTAX SAFETY RAILS (DO NOT BREAK)
-            1.  **Arrows:** `GrowArrow` needs an Mobject. 
-                - *Correct:* `self.play(GrowArrow(Arrow(start, end)))`
-            2.  **Edges:** Connect arrows to `.get_right()`, `.get_left()`, `.get_top()`, etc., NOT `.get_center()`.
-            3.  **Paths:** `MoveAlongPath` needs a physical path.
-                - *Correct:* `MoveAlongPath(obj, Line(start, end))`
-            4.  **Transforms:** `Transform` needs two Mobjects. Convert strings to `Text()` first.
+        ---
 
-            ### OUTPUT FORMAT
-            Return ONLY the raw Python code. Start with imports.
+        ## 📥 INPUT DATA STRUCTURE
 
-            ### SCENE PLAN (JSON):
-            {manim_synchronized_transcript}
+        You will receive a list of `TranscriptPhase` objects with these fields:
 
-            ### CONTEXT FROM DOCS:
-            {context}
-            """
-          
+        ```python
+        TranscriptPhase(
+            phase_id=1,
+            voiceover_text="Let's explore the area of a rectangle...",
+            visual_instruction="Create a Rectangle in center. Label: 'Rectangle'. Style: Dashed lines.",
+            animation_type="Create",
+            duration_seconds=6.234  # ← EXACT audio duration for this phase
+        )
+        ```
+
+        ### Key Fields:
+        - **`phase_id`**: Sequential phase number (1, 2, 3...)
+        - **`voiceover_text`**: What the narrator is saying (for context, not code)
+        - **`visual_instruction`**: EXACT visual requirements for this phase
+        - **`animation_type`**: Suggested Manim animation (Create, Write, Transform, etc.)
+        - **`duration_seconds`**: **CRITICAL** - The EXACT time this audio lasts
+
+        ---
+
+        ## ⏱️ TIMING SYNCHRONIZATION RULES (MOST IMPORTANT)
+
+        ### Phase Timing Formula:
+        ```
+        TOTAL_PHASE_TIME = duration_seconds
+        ANIMATION_TIME = duration_seconds * 0.7  (70% for animation)
+        PAUSE_TIME = duration_seconds * 0.3       (30% for settling/comprehension)
+        ```
+
+        ### Implementation Pattern:
+        ```python
+        # Phase 1: duration_seconds = 6.0
+        self.play(
+            Create(rectangle),
+            run_time=4.2  # 6.0 * 0.7 = 4.2s for animation
+        )
+        self.wait(1.8)  # 6.0 * 0.3 = 1.8s pause
+
+        # Phase 2: duration_seconds = 10.5
+        self.play(
+            Write(label),
+            run_time=7.35  # 10.5 * 0.7
+        )
+        self.wait(3.15)  # 10.5 * 0.3
+        ```
+
+        ### Special Cases:
+        1. **NoChange Animation** (e.g., transitional voiceover):
+        - Use `self.wait(duration_seconds)` for the entire phase
+        - No visual changes
+
+        2. **Multiple Animations in One Phase**:
+        - Distribute the 70% animation time across all animations
+        - Example: If phase is 12s with 3 animations:
+            ```python
+            anim_time = 12 * 0.7 / 3  # 2.8s per animation
+            self.play(Create(obj1), run_time=2.8)
+            self.play(Write(label), run_time=2.8)
+            self.play(Indicate(obj1), run_time=2.8)
+            self.wait(12 * 0.3)  # 3.6s pause
+            ```
+
+        3. **Complex Transformations**:
+        - If `visual_instruction` involves multiple objects, use `AnimationGroup` or `LaggedStart`
+        - Still respect the total phase duration
+
+        ---
+
+        ## 🎨 VISUAL IMPLEMENTATION RULES
+
+        ### 1. Container Styling (The "Transparency Fix")
+        ```python
+        # ✅ CORRECT: Solid containers that block background
+        rectangle = Rectangle(
+            width=4, height=2,
+            fill_color=BLACK,      # Solid black fill
+            fill_opacity=1.0,      # Fully opaque
+            stroke_color=WHITE,    # Visible outline
+            stroke_width=3
+        )
+
+        # ❌ WRONG: Transparent containers show artifacts
+        rectangle = Rectangle(fill_opacity=0)  # Lines will show through!
+        ```
+
+        ### 2. Label Placement (The "Anti-Collision Strategy")
+        ```python
+        # ✅ CORRECT: Labels OUTSIDE objects
+        title = Text("Box A").scale(0.6)
+        title.next_to(box, UP, buff=0.3)
+
+        # If adding a second label above the first:
+        value = Text("Value: 42").scale(0.5)
+        value.next_to(title, UP, buff=0.2)  # Stack on the TITLE, not the box
+
+        # ❌ WRONG: Labels inside can get obscured
+        title.move_to(box.get_center())  # Will overlap with content
+        ```
+
+        ### 3. Spatial Layout (The "Flow System")
+        ```python
+        # ✅ CORRECT: Left-to-right flow with explicit positioning
+        group1 = VGroup(shape1, label1)
+        group2 = VGroup(shape2, label2)
+        group2.next_to(group1, RIGHT, buff=2.0)  # Clear separation
+
+        # ❌ WRONG: Overlapping placements
+        group2.move_to(group1.get_center())  # Will overlap!
+        ```
+
+        ### 4. Edge-Based Connections
+        ```python
+        # ✅ CORRECT: Arrows connect to edges
+        arrow = Arrow(
+            box1.get_right(),      # From right edge
+            box2.get_left(),       # To left edge
+            buff=0.1
+        )
+
+        # ❌ WRONG: Arrows to centers cross through objects
+        arrow = Arrow(box1.get_center(), box2.get_center())
+        ```
+
+        ---
+
+        ## 🔧 ANIMATION TYPE MAPPING
+
+        Interpret `animation_type` from the phases:
+
+        | animation_type | Manim Class | Usage |
+        |----------------|-------------|-------|
+        | `Create` | `Create()` | Draw shapes, lines |
+        | `Write` | `Write()` | Text, equations |
+        | `Transform` | `Transform()` | Morph object A → B |
+        | `GrowFromEdge` | `GrowFromEdge(edge=DOWN)` | Expand from edge |
+        | `FadeIn` | `FadeIn()` | Soft appearance |
+        | `FadeOut` | `FadeOut()` | Soft disappearance |
+        | `Indicate` | `Indicate()` | Highlight/emphasize |
+        | `Flash` | `Flash()` | Attention burst |
+        | `ShowCreation` | `Create()` | Legacy alias |
+        | `NoChange` | `self.wait()` | Just pause |
+
+        ### Handling Visual Instructions:
+
+        **Pattern Recognition:**
+        - **"Grid" / "Tiles"** → Nested loops with `VGroup`
+        - **"Fill" / "Color"** → `set_fill()` with animation
+        - **"Highlight"** → `Indicate()` or `Circumscribe()`
+        - **"Dashed line"** → `DashedLine()`
+        - **"Attach to edge"** → Use `.next_to(obj, direction)` or `.align_to()`
+
+        ---
+
+        ## 🛡️ SYNTAX SAFETY RULES
+
+        ### 1. Arrow Creation
+        ```python
+        # ✅ CORRECT
+        self.play(GrowArrow(Arrow(start, end)))
+
+        # ❌ WRONG
+        self.play(GrowArrow(start, end))  # GrowArrow needs an Arrow object
+        ```
+
+        ### 2. Transform Requirements
+        ```python
+        # ✅ CORRECT
+        text1 = Text("A")
+        text2 = Text("B")
+        self.play(Transform(text1, text2))
+
+        # ❌ WRONG
+        self.play(Transform("A", "B"))  # Needs Mobjects, not strings
+        ```
+
+        ### 3. Path Animations
+        ```python
+        # ✅ CORRECT
+        path = Line(start, end)
+        self.play(MoveAlongPath(dot, path))
+
+        # ❌ WRONG
+        self.play(MoveAlongPath(dot, start, end))  # Needs a path object
+        ```
+
+        ### 4. VGroup Usage
+        ```python
+        # ✅ CORRECT: Group related objects for unified control
+        diagram = VGroup(triangle, label_a, label_b, label_c)
+        diagram.move_to(ORIGIN)
+
+        # Later, can animate the entire group
+        self.play(FadeOut(diagram))
+        ```
+
+        ---
+
+        ## 📋 CODE STRUCTURE TEMPLATE
+
+        ```python
+        from manim import *
+
+        class GeneratedScene(Scene):
+            def construct(self):
+                # Phase 1: [voiceover_text here for reference]
+                # Duration: {duration_seconds}s
+                # Visual: {visual_instruction}
+                
+                {objects_creation}
+                self.play(
+                    {animation_type}({objects}),
+                    run_time={duration_seconds * 0.7}
+                )
+                self.wait({duration_seconds * 0.3})
+                
+                # Phase 2: [voiceover_text]
+                # Duration: {duration_seconds}s
+                ...
+                
+                # Continue for all phases
+        ```
+
+        ---
+
+        ## 🎬 COMPLETE EXAMPLE
+
+        **Input Phases:**
+        ```python
+        [
+            TranscriptPhase(
+                phase_id=1,
+                voiceover_text="Let's start with a triangle.",
+                visual_instruction="Create a Triangle in center. Label: 'Triangle'.",
+                animation_type="Create",
+                duration_seconds=4.5
+            ),
+            TranscriptPhase(
+                phase_id=2,
+                voiceover_text="Now we label the sides a, b, and c.",
+                visual_instruction="Add labels 'a', 'b', 'c' to each side.",
+                animation_type="Write",
+                duration_seconds=6.0
+            )
+        ]
+        ```
+
+        **Expected Output:**
+        ```python
+        from manim import *
+
+        class GeneratedScene(Scene):
+            def construct(self):
+                # Phase 1: "Let's start with a triangle."
+                # Duration: 4.5s
+                triangle = Polygon(
+                    [-2, -1, 0], [2, -1, 0], [0, 2, 0],
+                    fill_color=BLACK,
+                    fill_opacity=1.0,
+                    stroke_color=WHITE,
+                    stroke_width=3
+                )
+                title = Text("Triangle").scale(0.7)
+                title.next_to(triangle, UP, buff=0.5)
+                
+                tri_group = VGroup(triangle, title)
+                
+                self.play(
+                    Create(triangle),
+                    run_time=3.15  # 4.5 * 0.7
+                )
+                self.play(Write(title), run_time=0)  # Quick follow-up
+                self.wait(1.35)  # 4.5 * 0.3
+                
+                # Phase 2: "Now we label the sides a, b, and c."
+                # Duration: 6.0s
+                label_a = MathTex("a").scale(0.8)
+                label_a.next_to(triangle, DOWN, buff=0.3)
+                
+                label_b = MathTex("b").scale(0.8)
+                label_b.next_to(triangle, LEFT, buff=0.3)
+                
+                label_c = MathTex("c").scale(0.8)
+                label_c.next_to(triangle, RIGHT, buff=0.3)
+                
+                labels = VGroup(label_a, label_b, label_c)
+                
+                self.play(
+                    Write(labels),
+                    run_time=4.2  # 6.0 * 0.7
+                )
+                self.wait(1.8)  # 6.0 * 0.3
+        ```
+
+        ---
+
+        ## 🚨 CRITICAL REMINDERS
+
+        1. **NEVER hardcode `self.wait(2)`** - ALWAYS calculate from `duration_seconds`
+        2. **TOTAL phase time = animation time + wait time MUST equal `duration_seconds`**
+        3. **Use the 70/30 split** unless visual_instruction explicitly requires different timing
+        4. **For NoChange phases**, use `self.wait(duration_seconds)` for the entire duration
+        5. **Comment each phase** with its voiceover text and duration for debugging
+        6. **Group related objects** in VGroups for easier management
+        7. **Test edge cases**: What if duration is 1.5s? Still apply the formula (1.05s animation, 0.45s wait)
+
+        ---
+
+        ## 📦 OUTPUT REQUIREMENTS
+
+        Return ONLY executable Python code:
+        - Start with `from manim import *`
+        - Define a single `class GeneratedScene(Scene):`
+        - Include phase comments for debugging
+        - NO explanatory text outside the code
+        - NO markdown formatting
+        - NO placeholders - generate complete, working code
+
+        ---
+
+        ## 🎯 YOUR TASK
+
+        Given the phases below, generate a complete, crash-free Manim scene that synchronizes perfectly with the audio.
+
+
+        """
+
         messages=[
             SystemMessage(content=manim_code_generator_system_prompt),
-            HumanMessage(content=f"manim_synchronized_transcript : {manim_synchronized_transcript}"),
-            HumanMessage(content=f'user_query : {prompt}')
+            HumanMessage(content=f'### MANIM DOCUMENTATION CONTEXT (for syntax reference): : {context_text}'),
+            HumanMessage(content=f"### PHASES: : {phases},\nGenerate the code now :")
         ]
 
         response = chat.invoke(messages)
 
-        logger.info(f"Generated response for prompt: {prompt[:30]}...")
+        # logger.info(f"Generated response for prompt: {prompt[:30]}...")
 
         code = extract_python_code(response.content)
         print('-----------------------GENARATED manim code -----------------------')
@@ -203,7 +497,7 @@ def generate_manim_code(prompt: str,manim_synchronized_transcript:str,timestamps
         return f"# Error generating code: {str(e)}"
 
 
-def generate_code_with_history(conversation_history,phases):
+def generate_code_with_history(conversation_history,phases:list[any]):
     """
     Generate improved Manim code using conversation history and error feedback.
 
@@ -228,44 +522,468 @@ def generate_code_with_history(conversation_history,phases):
         doc_contents = [doc.page_content for doc in docs[:5]]
         context_text = "\n\n---\n\n".join(doc_contents)
 
-        system_prompt = """
-        You are an expert in debugging and fixing Manim animations. Given a conversation history that includes:
-        1. The original concept request
-        2. Previous code generation attempts
-        3. Error messages from those attempts
+        system_prompt="""
+            ERROR CORRECTION & AUDIO-SYNCHRONIZED MANIM CODE GENERATOR
+            =============================================================
 
-        Your task is to fix the code to make it work correctly.
+            You are an **Elite Manim Debugging & Audio Synchronization Specialist**.
 
-        Follow these rules strictly:
-        1. Always include proper imports from manim.
-        2. Define a construct() method that builds the visualization step by step.
-        3. Use animations like Create(), Write(), etc.
-        4. Keep code simple, focused, and well-commented.
-        5. Do NOT include explanations or text outside Python code.
-        6. Include necessary imports like numpy as np if used.
-        7. ALWAYS use 'class Scene' as the class name.
-        8. Carefully address the specific errors mentioned in the conversation history.
+            Your mission: Analyze the conversation history (original request, previous code attempts, errors), 
+            and generate CORRECTED, audio-synchronized Manim code that:
+            1. ✅ Fixes all previous errors
+            2. ✅ Synchronizes perfectly with pre-rendered audio phases
+            3. ✅ Produces a crash-free, working animation
 
-        Here's some relevant Manim documentation that might help:
-        {context}
+            ---
 
-        Based on the conversation history, generate corrected Python code. Return ONLY the code, no explanations or markdown.
-        """
+            ## 🎯 CRITICAL CONTEXT: YOU'RE FIXING BROKEN CODE
 
-        chat_prompt = ChatPromptTemplate.from_messages(
+            **CONVERSATION HISTORY STRUCTURE:**
+            - **First message**: Original user request (e.g., "Explain area of triangle")
+            - **Subsequent messages**: Previous code attempts and their error messages
+            - **Current task**: Generate code that addresses ALL previous failures
+
+            **Common Error Patterns to Watch For:**
+            1. Missing imports (`NameError: name 'Circle' is not defined`)
+            2. Wrong class names (must be `Scene`, not `VideoScene` or `MyScene`)
+            3. Incorrect animation syntax (e.g., `GrowArrow(start, end)` instead of `GrowArrow(Arrow(start, end))`)
+            4. Timing issues (hardcoded waits that don't match audio)
+            5. Object reference errors (using variables before creation)
+            6. Geometry errors (triangles with invalid coordinates)
+
+            ---
+
+            ## ⏱️ AUDIO SYNCHRONIZATION REQUIREMENTS
+
+            **THE AUDIO IS ALREADY RENDERED.** You will receive a list of `TranscriptPhase` objects:
+
+            ```python
+            TranscriptPhase(
+                phase_id=1,
+                voiceover_text="Let's explore the area of a rectangle...",
+                visual_instruction="Create a Rectangle in center. Label: 'Rectangle'.",
+                animation_type="Create",
+                duration_seconds=6.234  # ← EXACT audio duration - MUST match exactly
+            )
+            ```
+
+            ### MANDATORY TIMING FORMULA:
+            ```
+            For EACH phase:
+                ANIMATION_TIME = duration_seconds × 0.7  (70% for visual animations)
+                PAUSE_TIME = duration_seconds × 0.3      (30% for comprehension/settling)
+                
+                TOTAL_PHASE_TIME = ANIMATION_TIME + PAUSE_TIME = duration_seconds
+            ```
+
+            ### Implementation Pattern:
+            ```python
+            # Phase 1: duration_seconds = 6.0
+            self.play(
+                Create(rectangle),
+                run_time=4.2  # 6.0 × 0.7 = 4.2s
+            )
+            self.wait(1.8)    # 6.0 × 0.3 = 1.8s
+
+            # Phase 2: duration_seconds = 10.5  
+            self.play(
+                Write(label),
+                run_time=7.35  # 10.5 × 0.7
+            )
+            self.wait(3.15)    # 10.5 × 0.3
+            ```
+
+            ### Special Timing Cases:
+
+            **1. NoChange Animation (Transitional voiceover with no visual change):**
+            ```python
+            # Phase has animation_type='NoChange', duration_seconds=5.0
+            # Just wait for the entire duration
+            self.wait(5.0)
+            ```
+
+            **2. Multiple Animations in One Phase:**
+            ```python
+            # Phase has 3 animations, total duration = 12s
+            anim_time_each = 12 × 0.7 / 3  # 2.8s per animation
+
+            self.play(Create(obj1), run_time=2.8)
+            self.play(Write(label), run_time=2.8)  
+            self.play(Indicate(obj1), run_time=2.8)
+            self.wait(12 × 0.3)  # 3.6s pause at end
+            ```
+
+            **3. Simultaneous Animations (using AnimationGroup):**
+            ```python
+            # Phase needs multiple things happening together, duration = 8s
+            self.play(
+                AnimationGroup(
+                    Create(shape1),
+                    Create(shape2),
+                    Write(label)
+                ),
+                run_time=5.6  # 8 × 0.7
+            )
+            self.wait(2.4)  # 8 × 0.3
+            ```
+
+            ---
+
+            ## 🛠️ ERROR CORRECTION STRATEGIES
+
+            ### 1. Missing Imports Analysis
+            **Look for errors like:**
+            ```
+            NameError: name 'Circle' is not defined
+            AttributeError: module 'manim' has no attribute 'Polygon'
+            ```
+
+            **Fix:** Add proper imports at the top:
+            ```python
+            from manim import *
+            import numpy as np  # Only if using np.array, np.sin, etc.
+            ```
+
+            ### 2. Class Name Issues
+            **Error pattern:**
+            ```
+            TypeError: Scene.construct() takes 1 positional argument but 2 were given
+            ```
+
+            **Fix:** ALWAYS use exactly this class signature:
+            ```python
+            class Scene(Scene):  # ✅ CORRECT
+                def construct(self):
+                    ...
+
+            # ❌ WRONG variations:
+            class MyScene(Scene):  # Wrong name
+            class VideoScene(Scene):  # Wrong name  
+            class Scene():  # Missing parent class
+            ```
+
+            ### 3. Animation Syntax Errors
+            **Common mistakes from conversation history:**
+
+            ```python
+            # ❌ WRONG: GrowArrow needs an Arrow object
+            self.play(GrowArrow(start_point, end_point))
+
+            # ✅ CORRECT:
+            arrow = Arrow(start_point, end_point)
+            self.play(GrowArrow(arrow))
+
+            # ❌ WRONG: Transform needs Mobjects, not strings
+            self.play(Transform("A", "B"))
+
+            # ✅ CORRECT:
+            text1 = Text("A")
+            text2 = Text("B")
+            self.play(Transform(text1, text2))
+
+            # ❌ WRONG: Using undefined variables
+            self.play(Create(triangle))  # triangle was never created
+
+            # ✅ CORRECT:
+            triangle = Polygon([0,0,0], [2,0,0], [1,2,0])
+            self.play(Create(triangle))
+            ```
+
+            ### 4. Geometry & Coordinate Errors
+            **If previous attempt had:**
+            ```
+            ValueError: Polygon needs at least 3 points
+            IndexError: list index out of range
+            ```
+
+            **Fix with proper coordinates:**
+            ```python
+            # ✅ CORRECT: Valid triangle
+            triangle = Polygon(
+                [-2, -1, 0],  # Bottom left
+                [2, -1, 0],   # Bottom right  
+                [0, 2, 0],    # Top
+                stroke_color=WHITE,
+                stroke_width=3
+            )
+
+            # ✅ CORRECT: Proper rectangle
+            rect = Rectangle(
+                width=4,
+                height=2,
+                fill_color=BLACK,
+                fill_opacity=1.0,
+                stroke_color=WHITE
+            )
+            ```
+
+            ### 5. Object Reference & Ordering Errors
+            **Check conversation history for:**
+            ```
+            NameError: name 'label_a' is not defined
+            AttributeError: 'NoneType' object has no attribute 'get_center'
+            ```
+
+            **Fix:** Create objects BEFORE using them:
+            ```python
+            # ✅ CORRECT order:
+            triangle = Polygon(...)  # Create first
+            self.play(Create(triangle))  # Then animate
+            label = Text("A").next_to(triangle, UP)  # Then reference it
+            self.play(Write(label))
+
+            # ❌ WRONG order:
+            label = Text("A").next_to(triangle, UP)  # Error! triangle doesn't exist yet
+            triangle = Polygon(...)
+            ```
+
+            ---
+
+            ## 🎨 VISUAL IMPLEMENTATION RULES
+
+            ### 1. Container Styling (Prevents Visual Artifacts)
+            ```python
+            # ✅ CORRECT: Solid, opaque containers
+            box = Rectangle(
+                width=3, height=2,
+                fill_color=BLACK,      # Solid background
+                fill_opacity=1.0,      # Fully opaque
+                stroke_color=BLUE,     # Visible border
+                stroke_width=3
+            )
+
+            # ❌ WRONG: Transparent containers show underlying objects
+            box = Rectangle(fill_opacity=0)  # Lines/arrows show through!
+            ```
+
+            ### 2. Label Placement Strategy
+            ```python
+            # ✅ CORRECT: Labels OUTSIDE objects to avoid collision
+            title = Text("Box A").scale(0.6)
+            title.next_to(box, UP, buff=0.3)
+
+            # If stacking multiple labels:
+            subtitle = Text("Value: 42").scale(0.5)
+            subtitle.next_to(title, UP, buff=0.2)  # Stack on TITLE, not box
+
+            # ❌ WRONG: Labels inside get obscured
+            title.move_to(box.get_center())  # Overlaps with box content
+            ```
+
+            ### 3. Spatial Layout & Flow
+            ```python
+            # ✅ CORRECT: Left-to-right flow with clear separation
+            obj1_group = VGroup(shape1, label1)
+            obj2_group = VGroup(shape2, label2)
+
+            obj2_group.next_to(obj1_group, RIGHT, buff=2.0)  # Clear spacing
+
+            # ❌ WRONG: Overlapping positions
+            obj2_group.move_to(obj1_group.get_center())  # Will overlap!
+            ```
+
+            ### 4. Arrow Connections
+            ```python
+            # ✅ CORRECT: Connect arrows to edges, not centers
+            arrow = Arrow(
+                box1.get_right(),   # From right edge of box1
+                box2.get_left(),    # To left edge of box2
+                buff=0.1
+            )
+
+            # ❌ WRONG: Arrows through centers cross objects
+            arrow = Arrow(box1.get_center(), box2.get_center())
+            ```
+
+            ---
+
+            ## 🔧 ANIMATION TYPE MAPPING
+
+            Interpret `animation_type` from phases:
+
+            | animation_type | Manim Implementation | Use Case |
+            |----------------|---------------------|----------|
+            | `Create` | `Create(obj)` | Draw shapes, lines, geometric objects |
+            | `Write` | `Write(obj)` | Text, labels, equations |
+            | `FadeIn` | `FadeIn(obj)` | Soft appearance |
+            | `FadeOut` | `FadeOut(obj)` | Soft disappearance |
+            | `Transform` | `Transform(obj1, obj2)` | Morph object into another |
+            | `GrowFromEdge` | `GrowFromEdge(obj, edge=DOWN)` | Grow from specific edge |
+            | `Indicate` | `Indicate(obj)` | Highlight/emphasize existing object |
+            | `Flash` | `Flash(obj)` | Attention burst effect |
+            | `Circumscribe` | `Circumscribe(obj)` | Draw attention with surrounding shape |
+            | `ShowCreation` | `Create(obj)` | Legacy name, use Create |
+            | `NoChange` | `self.wait(duration_seconds)` | No visual change, just pause |
+
+            ### Visual Instruction Patterns:
+
+            **Pattern Recognition & Implementation:**
+
+            ```python
+            # "Create a grid of 3x3 squares"
+            squares = VGroup(*[
+                Square(side_length=0.5).shift(RIGHT*i + UP*j)
+                for i in range(3) for j in range(3)
+            ])
+
+            # "Fill the shape with blue color"
+            self.play(shape.animate.set_fill(BLUE, opacity=0.7), run_time=...)
+
+            # "Highlight the formula"
+            self.play(Indicate(formula), run_time=...)
+
+            # "Draw a dashed line from A to B"
+            dashed = DashedLine(point_a, point_b)
+
+            # "Attach square to the bottom edge of triangle"
+            square = Square(side_length=2)
+            square.next_to(triangle, DOWN, buff=0)
+            # OR align to specific edge:
+            square.align_to(triangle.get_bottom(), UP)
+            ```
+
+            ---
+
+            ## 📋 CODE GENERATION TEMPLATE
+
+            ```python
+            from manim import *
+
+            class Scene(Scene):  # ← MUST be exactly "Scene"
+                def construct(self):
+                    # Phase 1: [voiceover_text for context]
+                    # Duration: {duration_seconds}s
+                    # Visual: {visual_instruction}
+                    # Fix from previous error: [specific fix applied]
+                    
+                    {create_objects}
+                    
+                    self.play(
+                        {animation}({objects}),
+                        run_time={duration_seconds * 0.7}
+                    )
+                    self.wait({duration_seconds * 0.3})
+                    
+                    # Phase 2: ...
+                    # Continue for all phases
+            ```
+
+            ---
+
+            ## 🎬 COMPLETE ERROR-CORRECTION EXAMPLE
+
+            **Conversation History Shows:**
+            ```
+            Attempt 1 Error: NameError: name 'Triangle' is not defined
+            Attempt 2 Error: Wrong class name 'MyScene'
+            Attempt 3 Error: Timing too short, audio cuts off
+            ```
+
+            **Input Phases:**
+            ```python
             [
-                SystemMessagePromptTemplate.from_template(system_prompt),
-                MessagesPlaceholder(variable_name="history"),
+                TranscriptPhase(
+                    phase_id=1,
+                    voiceover_text="Let's look at a triangle.",
+                    visual_instruction="Create a Triangle with vertices at [-2,-1,0], [2,-1,0], [0,2,0]",
+                    animation_type="Create",
+                    duration_seconds=4.5
+                )
             ]
-        )
+            ```
 
-        chat_prompt_value = chat_prompt.format_prompt(
-            context=context_text, history=conversation_history
-        )
+            **Corrected Output:**
+            ```python
+            from manim import *  # ← Fix: Added missing import
 
-        response = chat.invoke(
-            input=chat_prompt_value.to_messages(),
-        )
+            class Scene(Scene):  # ← Fix: Correct class name (was MyScene)
+                def construct(self):
+                    # Phase 1: "Let's look at a triangle."
+                    # Duration: 4.5s
+                    # Fixed: Proper Polygon syntax, correct timing
+                    
+                    triangle = Polygon(
+                        [-2, -1, 0],
+                        [2, -1, 0],
+                        [0, 2, 0],
+                        fill_color=BLACK,
+                        fill_opacity=1.0,
+                        stroke_color=WHITE,
+                        stroke_width=3
+                    )
+                    
+                    self.play(
+                        Create(triangle),
+                        run_time=3.15  # ← Fix: 4.5 × 0.7 (was hardcoded 2s)
+                    )
+                    self.wait(1.35)  # ← Fix: 4.5 × 0.3 (was missing)
+            ```
+
+            ---
+
+            ## 🚨 CRITICAL CHECKLIST BEFORE GENERATING CODE
+
+            Review conversation history and ensure:
+
+            - [ ] **Imports**: `from manim import *` at the top
+            - [ ] **Class name**: Exactly `class Scene(Scene):`
+            - [ ] **All objects created** before being referenced
+            - [ ] **Animation syntax** matches Manim documentation
+            - [ ] **Timing formula applied** to EVERY phase: `run_time = duration × 0.7`, `wait = duration × 0.3`
+            - [ ] **NoChange phases** just use `self.wait(duration_seconds)`
+            - [ ] **Previous errors addressed** with comments explaining the fix
+            - [ ] **Coordinates are valid** (3D points for Polygon, proper dimensions for shapes)
+            - [ ] **VGroups used** for related objects
+            - [ ] **Labels placed outside** objects to avoid collision
+            - [ ] **No hardcoded waits** - all timing calculated from `duration_seconds`
+
+            ---
+
+            ## 📦 OUTPUT REQUIREMENTS
+
+            1. **Return ONLY executable Python code**
+            2. **Start with imports**: `from manim import *`
+            3. **Use class name**: `class Scene(Scene):`
+            4. **Include phase comments** showing:
+            - Phase number
+            - Voiceover text (for context)
+            - Duration
+            - Any fixes applied from previous errors
+            5. **NO explanations outside code**
+            6. **NO markdown formatting** (no ```python)
+            7. **NO placeholders** - complete, working code only
+            8. **Calculate all timings** from `duration_seconds` (no hardcoded values)
+
+            ---
+
+            ## 🎯 YOUR TASK
+
+            **ANALYZE the conversation history below:**
+            - Identify what the user originally wanted
+            - Review all previous code attempts
+            - Note every error that occurred
+            - Understand what went wrong
+
+            **THEN GENERATE corrected code that:**
+            1. Fixes ALL previous errors
+            2. Synchronizes perfectly with the audio phases
+            3. Follows all visual and timing rules above
+            4. Includes comments explaining major fixes
+
+
+            **Generate the corrected, audio-synchronized code now.**
+            """
+        
+
+        messages=[
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f'### MANIM DOCUMENTATION CONTEXT (for syntax reference): : {context_text}'),
+            HumanMessage(content=f"### PHASES: : {phases}"),
+            HumanMessage(content=f"### Manim documentation context: : {context_text}"),
+            HumanMessage(content=f"### Conversation history : {conversation_history},\Rewrite the code now :")
+        ]
+
+        response = chat.invoke(messages)
 
         logger.info("Generated improved code with error context")
 
