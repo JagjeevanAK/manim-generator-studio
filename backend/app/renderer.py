@@ -15,6 +15,7 @@ from langchain_core.prompts import (
     SystemMessagePromptTemplate,
     HumanMessagePromptTemplate,
 )
+import math
 import wave
 import re
 import json
@@ -501,9 +502,27 @@ async def process_rendering_job(job_id: str, prompt: str, quality: str):
         with wave.open(filename, 'rb') as audio_file:
             frames = audio_file.getnframes()
             rate = audio_file.getframerate()  # Should be 44100
-            duration_seconds = frames / float(rate)
-            phases[cnt].duration_seconds = duration_seconds
+            original_time = frames / float(rate)
+            floored_time=math.ceil(original_time)
+            silence_time=floored_time-original_time
+            phases[cnt].duration_seconds = floored_time
 
+            params = audio_file.getparams()
+            audio_frames = audio_file.readframes(frames)
+
+        silence_seconds = silence_time  # example
+        silence_frames = int(rate * silence_seconds)
+
+        sample_width = params.sampwidth
+        channels = params.nchannels
+
+        # silence = zeros
+        silence_data = b'\x00' * silence_frames * sample_width * channels
+
+        with wave.open(filename, 'wb') as out:
+            out.setparams(params)
+            out.writeframes(audio_frames)
+            out.writeframes(silence_data)
         cnt+=1
 
     print(f'phases now : {phases}')
