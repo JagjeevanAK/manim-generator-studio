@@ -1,0 +1,81 @@
+----------
+Create a Manim scene for the RAG pipeline.
+
+Layout & Style:
+
+Flow is Left-to-Right.
+
+CRITICAL: All Boxes/Circles must have fill_color=BLACK and fill_opacity=1 so arrows don't show through them.
+
+Labels for boxes must be OUTSIDE (Above or Below), never inside.
+
+Sequence:
+
+Input: Text "User Query" on the Left. Wait 2s.
+
+Embedder: Blue Rectangle labeled "Embedding Model" (Label UP).
+
+Connection: Draw an arrow from the Right Edge of "User Query" to the Left Edge of the Box. Wait 2s.
+
+Process: Create vector text [0.1, 0.9...] positioned above the Embedding Box.
+
+Animation: Use ReplacementTransform to turn the "User Query" text into the [0.1, 0.9...] text. This implies the data moved and changed format. Wait 3s.
+
+Retrieval: Blue Circle labeled "Vector DB" (Label DOWN) below the Embedder. Arrow from Vector text down to DB. Text "Retrieved Context" appears next to DB. Wait 3s.
+
+Synthesis: Yellow Rectangle labeled "LLM" (Label UP) on the Right.
+
+Feed: Animate "Retrieved Context" moving into the LLM Box and Fading Out. Wait 3s.
+
+Output: Text "Answer" pops out of the Right side of LLM.
+---------
+Create a Manim scene visualizing a mathematical "Function Machine".
+
+**Global Style Rules:**
+1. **Flow:** Strict Left-to-Right.
+2. **Style:** The machine box must have `fill_color=BLACK` and `fill_opacity=1`.
+3. **Labels:** Place the main label "Function: x²" ABOVE the box.
+
+**Animation Sequence:**
+
+1.  **The Input:** Create a Number "3" (font size 48) on the far LEFT. Wait 1s.
+
+2.  **The Machine:** Create a Green Rectangle in the CENTER.
+    - Label it "Function: x²" (Label UP).
+    - Wait 1s.
+
+3.  **The Action:** - Animate the Number "3" moving into the **Center** of the Green Rectangle.
+    - Wait 1s.
+    - Use `Transform` to change the Number "3" into the Number "9" (Yellow color) while it is inside the box.
+    - Wait 1s.
+
+4.  **The Output:**
+    - Animate the new Number "9" moving from the box to the far RIGHT.
+    - Wait 2s.
+
+----TUTORING EXAMPLES
+
+Create a Manim video that visually demonstrates the concept of the Pythagorean theorem ($a^2 + b^2 = c^2$).
+
+**Visual Setup & Style:**
+1.  **Style:** Use a clean, simple style. Ensure no objects overlap.
+2.  **Main Object:** Create a right-angled triangle in the center with sides of length 3, 4, and 5. Label the sides 'a', 'b', and 'c' respectively.
+3.  **Secondary Objects:** Create three squares, each attached to one side of the triangle, representing the area of that side ($a^2$, $b^2$, $c^2$).
+
+**Transcript & Timing Instructions (CRITICAL):**
+Read the transcript below. You must generate the animation code step-by-step to match the narration. After each distinct phrase of the transcript, insert a `self.wait(3)` to allow the voiceover time to speak.
+
+* **Transcript Phrase 1:** "Let's start with a right-angled triangle. The shorter sides are 'a' and 'b', and the long side is 'c'."
+    * **Action:** Animate the creation of the triangle and its 'a', 'b', 'c' labels.
+
+* **Transcript Phrase 2:** "The Pythagorean theorem is about the area of squares built on these sides."
+    * **Action:** None (just a pause for explanation).
+
+* **Transcript Phrase 3:** "First, here is the square associated with side 'a'..."
+    * **Action:** Animate the creation of the square on side 'a' and label it '$a^2$'.
+
+* **Transcript Phrase 4:** "...and here is the square for side 'b'."
+    * **Action:** Animate the creation of the square on side 'b' and label it '$b^2$'.
+
+* **Transcript Phrase 5:** "The theorem states that if you add these two areas together, they perfectly equal the area of the square on side 'c'."
+    * **Action:** Animate the creation of the final square on the hypotenuse 'c' and label it '$c^2$'.

@@ -21,13 +21,53 @@ import math
 from cartesia import Cartesia,AsyncCartesia
 import asyncio
 from pydantic import BaseModel, Field
+from typing import List,Optional
 
-# Define the data structure you want the LLM to return
-class manim_synchronized_transcript(BaseModel):
-    """The complete plan for generating a Manim video."""
-    
-    manim_synchronized_transcript: list[any] = Field(
-        description="Array of objects of manim_synchronized_transcript with each obj having 3 properties pahse_id, voiceover_text, visual_instruction"
+
+class TranscriptPhase(BaseModel):
+    phase_id: int = Field(
+        description="Sequential phase number starting from 1"
+    )
+
+    voiceover_text: str = Field(
+        description="Exact narration text to be spoken by the voiceover"
+    )
+
+    visual_instruction: str = Field(
+        description=(
+            "Detailed Manim visual instructions describing objects, "
+            "positions, labels, colors, and spatial relationships"
+        )
+    )
+
+    animation_type: Optional[AnimationType] = Field(
+        default=None,
+        description="Manim animation type used to introduce or modify visuals"
+    )
+
+
+
+class ManimSynchronizedTranscript(BaseModel):
+    """
+    The complete plan for generating a synchronized Manim + voiceover video.
+    """
+
+    phases: List[TranscriptPhase] = Field(
+        description="Ordered list of synchronized narration and visual phases"
+    )
+
+
+class TTSFinalTranscript(BaseModel):
+    """
+    Phase-by-phase TTS-ready transcripts with embedded SSML timing.
+    Each phase corresponds to one visual scene in the Manim animation.
+    """
+    phasewise_transcripts: List[str] = Field(
+        description=(
+            "List of TTS-ready strings, one per phase. Each string contains "
+            "the voiceover text with SSML <break> tags for natural pacing. "
+            "Order matches the phase_id sequence from ManimSynchronizedTranscript."
+        )
     )
 
 
@@ -44,7 +84,7 @@ chat = ChatCohere(
     temperature=0.3 
 )
 
-llm_with_structured_output = chat.with_structured_output(manim_synchronized_transcript)
+llm_with_structured_output = chat.with_structured_output(ManimSynchronizedTranscript)
 
 def run_manim(code: str, temp_dir: str, quality: str = "m") -> tuple[bool, str]:
     """
@@ -225,6 +265,7 @@ async def process_rendering_job(job_id: str, prompt: str, quality: str):
 
     conversation_history = []
     conversation_history.append(HumanMessage(content=prompt))
+
     #prompt = user_query
     #1.create one transcript for tutoring
     #2.manim_scynchronized_transcript(generates transcript as well as mentions what the manim will be showing in the video)
@@ -336,57 +377,103 @@ async def process_rendering_job(job_id: str, prompt: str, quality: str):
         HumanMessage(content=prompt)
     ]
 
+    #TODO : add with_structured_output for better reliability on llm calls
+
     manim_synchronized_transcript = llm_with_structured_output.invoke(messages)
 
-    print(f'manim_synchronized_transcript : {manim_synchronized_transcript}')
+    print(f'manim_synchronized_transcript : {manim_synchronized_transcript.phases}')
 
     tts_final_transcript_generator_system_prompt = """
-        You are the **Audio Mastering Agent**.
-        Your ONLY goal is to output a raw string for a Text-to-Speech (TTS) engine.
+       You are the **TTS Transcript Optimizer** for an educational video pipeline.
 
-        ### INPUT DATA
-        You will receive a JSON list of video phases. Each phase contains:
-        - `voiceover_text`: The spoken words.
-        - `visual_instruction`: The context for the pause.
+        ### YOUR ROLE
+        Transform phase-by-phase educational narration into TTS-ready transcripts with precise timing controls.
+
+        ### INPUT
+        You receive a `ManimSynchronizedTranscript` object containing:
+        - `phase_id`: Sequential phase number
+        - `voiceover_text`: The raw narration for this phase
+        - `visual_instruction`: Description of what's being animated (used to determine pause duration)
+        - `animation_type`: Type of Manim animation (e.g., Create, Write, Transform)
 
         ### YOUR TASK
-        Convert the list into a single, continuous string with SSML break tags inserted between phrases.
+        Generate a list of TTS-ready strings, ONE STRING PER PHASE, with SSML break tags inserted for natural pacing.
 
-        ### STRICT OUTPUT RULES
-        1.  **NO MARKDOWN:** Do not wrap the output in ```xml or ```txt.
-        2.  **NO JSON:** Do not output a key-value pair.
-        3.  **NO CONVERSATION:** Do not say "Here is the text." Just output the text itself.
-        4.  **SSML TAGS:** Use `<break time="2.0s" />` for standard pauses and `<break time="3.0s" />` for complex visual transitions.
+        ### CRITICAL RULES
 
-        ### LOGIC
-        1. Read Phase 1 `tutor_transcript`.
-        2. Append a break tag based on Phase 1 `manin_syncrhonized_transcript` complexity.
-        3. Read Phase 2 `tutor_transcript`.
-        4. Append break tag...
-        5. Repeat until done.
+        1. **One-to-One Mapping**: Output exactly ONE transcript string for each input phase, in the same order.
 
-        ### EXAMPLE INTERACTION
+        2. **SSML Break Placement**: Insert `<break>` tags WITHIN each phase based on:
+        - **Sentence boundaries**: Add `<break time="0.4s"/>` after sentences
+        - **Clause breaks**: Add `<break time="0.3s"/>` after commas or logical pauses
+        - **Complex visuals**: If `visual_instruction` mentions multiple objects or transformations, add `<break time="0.6s"/>` after key statements
+        - **End-of-phase**: Add `<break time="1.0s"/>` at the END of each phase string to allow the animation to complete
 
-        **Input:**
-        [
-        { "voiceover_text": "First, we draw a circle.", "visual_instruction": "Create Circle" },
-        { "voiceover_text": "Then, we fill it with blue.", "visual_instruction": "Animate Fill" }
-        ]
+        3. **Timing Guidelines**:
+        - Simple animations (Create, Write): 0.3-0.5s pauses
+        - Complex animations (Transform, Multiple objects): 0.6-1.0s pauses
+        - End of phase: Always 1.0s minimum
+
+        4. **Natural Speech Flow**: 
+        - Break long sentences into digestible chunks with micro-pauses
+        - Don't over-pause—maintain conversational rhythm
+        - Add emphasis pauses before key concepts
+
+        5. **Output Format**: 
+        - Return ONLY the structured data (will be handled by `with_structured_output`)
+        - Each string is pure TTS content—no phase numbers, no metadata
+        - Do NOT wrap in `<speak>` tags (TTS engine handles that)
+
+        ### EXAMPLE
+
+        **Input Phases:**
+        ```
+        Phase 1:
+        voiceover_text: "Let's start with a right-angled triangle."
+        visual_instruction: "Create a Right Triangle in center with labels a, b, c"
+        animation_type: "Create"
+
+        Phase 2:
+        voiceover_text: "Now we attach a square to each side and see something amazing."
+        visual_instruction: "Create 3 Squares attached to each edge, colored differently"
+        animation_type: "GrowFromEdge"
+        ```
 
         **Correct Output:**
-        <speak>First, we draw a circle. <break time="2.0s" /> Then, we fill it with blue. <break time="2.0s" />....<speak>
-    """
+        ```json
+        {
+        "phasewise_transcripts": [
+            "Let's start with a right-angled triangle. <break time='1.0s'/>",
+            "Now we attach a square to each side <break time='0.4s'/> and see something amazing. <break time='1.0s'/>"
+        ]
+        }
+        ```
 
+        ### WHAT TO AVOID
+        - ❌ Combining multiple phases into one string
+        - ❌ Adding conversational filler ("Here's the transcript...")
+        - ❌ Including phase numbers in the output
+        - ❌ Forgetting the end-of-phase pause
+        - ❌ Using markdown code blocks
+
+        ### REMEMBER
+        Your output will be directly fed to a TTS engine. Every word you include will be spoken. Every pause you add will be heard.
+        """
+    
     messages=[
         SystemMessage(content=tts_final_transcript_generator_system_prompt),
-        HumanMessage(content=f'tutor_transcript is : {tutor_transcript.content}'),
-        HumanMessage(content=f'manim_synchornized_transcript is : {manim_synchronized_transcript.content}'),
+        # HumanMessage(content=f'tutor_transcript is : {tutor_transcript.content}'),
+        HumanMessage(content=f'manim_synchornized_transcript is : {manim_synchronized_transcript.phases}'),
     ]
 
-    tts_final_transcript = chat.invoke(messages)
+    llm_with_tts_output = chat.with_structured_output(TTSFinalTranscript)
 
-    print(f'tts_final_transcript : {tts_final_transcript.content}')
+    tts_final_transcript = llm_with_tts_output.invoke(messages)
 
+    print(f'tts_final_transcript phasewise : {tts_final_transcript.content}')
+
+    print('STOPPING HERE')
+    return
     #
     client = AsyncCartesia(api_key=os.environ["CARTESIA_API_KEY"])
 
