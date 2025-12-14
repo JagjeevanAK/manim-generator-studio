@@ -470,7 +470,29 @@ async def process_rendering_job(job_id: str, prompt: str, quality: str):
 
     tts_final_transcript = llm_with_tts_output.invoke(messages)
 
-    print(f'tts_final_transcript phasewise : {tts_final_transcript.content}')
+    print(f'tts_final_transcript phasewise : {tts_final_transcript.phases}')
+
+    cartesia_client = Cartesia(api_key=os.getenv("CARTESIA_API_KEY"))
+    cnt=0
+
+    phasewise_transcripts=tts_final_transcript.phasewise_transcripts
+    for transcript in phasewise_transcripts:
+        chunks = cartesia_client.tts.bytes(
+            model_id="sonic-3",
+            transcript=transcript,
+            voice={"mode": "id", "id": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"},
+            language="en",
+            output_format={
+                "container": "wav",
+                "sample_rate": 44100,
+                "encoding": "pcm_s16le"
+                }
+        )
+
+        with open(f"audio_{cnt}.wav", "wb") as f:
+            for chunk in chunks:
+                f.write(chunk)
+
 
     print('STOPPING HERE')
     return
