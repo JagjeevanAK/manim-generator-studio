@@ -92,6 +92,9 @@ chat = ChatCohere(
     temperature=0.3 
 )
 
+
+
+
 llm_with_structured_output = chat.with_structured_output(ManimSynchronizedTranscript)
 
 def run_manim(code: str, temp_dir: str, quality: str = "m") -> tuple[bool, str]:
@@ -529,41 +532,11 @@ async def process_rendering_job(job_id: str, prompt: str, quality: str):
     print("Final audio saved as:", final_audio_filename)
     print(f'phases now : {phases}')
 
-    # #concatenating all phases audio
-    # frames_all = []
-    # params_ref = None
-
-    # for i in range(cnt):
-    #     fname = f"{local_audio_files_name}_{i}.wav"
-    #     if not os.path.exists(fname):
-    #         raise FileNotFoundError(fname)
-
-    #     with wave.open(fname, 'rb') as wf:
-    #         if params_ref is None:
-    #             params_ref = wf.getparams()
-    #         else:
-    #             if wf.getparams()[:3] != params_ref[:3]:
-    #                 raise ValueError(f"Audio format mismatch in {fname}")
-
-    #         frames_all.append(wf.readframes(wf.getnframes()))
-
-    # with wave.open(final_audio_filename, 'wb') as out:
-    #     out.setparams(params_ref)
-    #     for frames in frames_all:
-            # out.writeframes(frames)
-
-    # print('STOPPING HERE')
-    # return
-    #
-   
-    # 5. PASS TO MANIM GENERATOR
-    # Now you call the LLM to write the Python code
-    # The LLM will see: "audio_duration": 4.5 and write self.wait(4.5)
 
     try:
         manim_code = generate_manim_code(
             prompt=prompt, 
-            manim_synchronized_transcript=json.dumps(phases) # Pass the TIMED json
+            phases=phases
         )
         # code = generate_manim_code(prompt,manim_synchronized_transcript.content)
         conversation_history.append(AIMessage(content=manim_code))
@@ -663,7 +636,7 @@ async def process_rendering_job(job_id: str, prompt: str, quality: str):
             final_video_with_audio = os.path.join(RENDER_DIR, "final_with_audio.mp4")
             input_video = ffmpeg.input(video_full_path)
             input_audio = ffmpeg.input(final_audio_filename)
-            
+
             (
                 ffmpeg
                 .output(

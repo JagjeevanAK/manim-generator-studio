@@ -38,6 +38,13 @@ chat = ChatCohere(
     temperature=0.3 
 )
 
+cohere = ChatCohere(
+    model="command-a-03-2025", 
+    verbose=True,
+    cohere_api_key=settings.COHERE_API_KEY,
+    temperature=0.3 
+)
+
 chat_history = []
 
 MAX_HISTORY_LENGTH = 20
@@ -58,7 +65,7 @@ def extract_python_code(text: str) -> str:
     return matches[0] if matches else text
 
 
-def generate_manim_code(prompt: str,phases:list[any],timestamps:list) -> str:
+def generate_manim_code(prompt: str,phases:list[any]) -> str:
     """Generate Manim code using Cohere model with improved retrieval context."""
     add_message_to_history(HumanMessage(content=prompt))
 
@@ -95,7 +102,7 @@ def generate_manim_code(prompt: str,phases:list[any],timestamps:list) -> str:
     try:
         messages=[
             SystemMessage(content=query_enhancement_prompt),
-            HumanMessage(content=f'manin_synchronized_transcript : {manim_synchronized_transcript}')
+            HumanMessage(content=f'phases : {phases}')
         ]
 
         enhanced_query_response = chat.invoke(
@@ -483,7 +490,7 @@ def generate_manim_code(prompt: str,phases:list[any],timestamps:list) -> str:
             HumanMessage(content=f"### PHASES: : {phases},\nGenerate the code now :")
         ]
 
-        response = chat.invoke(messages)
+        response = cohere.invoke(messages)
 
         # logger.info(f"Generated response for prompt: {prompt[:30]}...")
 
@@ -983,10 +990,11 @@ def generate_code_with_history(conversation_history,phases:list[any]):
             HumanMessage(content=f"### Conversation history : {conversation_history},\Rewrite the code now :")
         ]
 
-        response = chat.invoke(messages)
+        response = cohere.invoke(messages)
 
         logger.info("Generated improved code with error context")
-
+        print('------------------Improved Manim code : ')
+        print(response.content)
         code = extract_python_code(response.content)
         return code
 
