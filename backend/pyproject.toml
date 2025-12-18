@@ -22,7 +22,10 @@ dependencies = [
     "langchain-text-splitters>=1.0.0",
     "langchain-cohere>=0.5.0",
     "cartesia",
-    "pydub"
+    "pydub",
+    "ffmpeg-python",
+    "strands-agents",
+    "strands-agents-tool"
 ]
 
 [build-system]
