@@ -25,7 +25,8 @@ dependencies = [
     "pydub",
     "ffmpeg-python",
     "strands-agents",
-    "strands-agents-tool"
+    "strands-agents-tools",
+    "litellm"
 ]
 
 [build-system]

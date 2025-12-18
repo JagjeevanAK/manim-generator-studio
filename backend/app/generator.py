@@ -11,6 +11,22 @@ from langchain_core.prompts import (
     HumanMessagePromptTemplate,
 )
 from langchain_pinecone import PineconeVectorStore
+from strands import Agent,tool
+
+model = LiteLLMModel(
+    client_args={
+        "api_key":settings.OPENROUTER_API_KEY,
+    },
+    model_id="openrouter/openai/gpt-4o-mini",
+    # model_id="openrouter/google/gemini-2.0-flash-lite-001",
+    # model_id="openrouter/google/gemini-2.0-flash-exp:free",
+    # model_id="openrouter/google/gemini-2.0-flash-001",
+    # model_id="openrouter/google/gemini-2.5-pro",
+    params={
+        'temperature':0.5,
+        "max_tokens":1000
+    },
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -64,6 +80,40 @@ def extract_python_code(text: str) -> str:
     matches = code_pattern.findall(text)
     return matches[0] if matches else text
 
+
+# @tool
+def rag(queries:str):
+    """Rag tool on manim documentations
+
+    Args: 
+        queries: str with all the queries for RAG
+    """
+    doc_search = PineconeVectorStore(
+        index_name=settings.PINECONE_INDEX_NAME,
+        embedding=embedding,
+        pinecone_api_key=settings.PINECONE_API_KEY,
+    )
+
+    retriever = doc_search.as_retriever()
+
+    docs_original = retriever.invoke()
+
+    docs_enhanced = retriever.invoke(queries)
+
+    all_docs = docs_original + docs_enhanced
+    unique_docs = []
+    seen_content = set()
+
+    for doc in all_docs:
+        if doc.page_content not in seen_content:
+            seen_content.add(doc.page_content)
+            unique_docs.append(doc)
+
+    doc_contents = []
+    for doc in unique_docs[:7]:
+        doc_contents.append(doc.page_content)
+
+    return unique_docs
 
 def generate_manim_code(prompt: str,phases:list[any]) -> str:
     """Generate Manim code using Cohere model with improved retrieval context."""
@@ -137,7 +187,7 @@ def generate_manim_code(prompt: str,phases:list[any]) -> str:
         for doc in unique_docs[:7]:
             doc_contents.append(doc.page_content)
 
-        context_text = "\n\n---\n\n".join(doc_contents)
+        context_text = f"\n\n---\n\n".join(doc_contents)
 
         logger.info(f"Retrieved {len(unique_docs)} unique relevant documents")
 
@@ -482,11 +532,112 @@ def generate_manim_code(prompt: str,phases:list[any]) -> str:
         Given the phases below, generate a complete, crash-free Manim scene that synchronizes perfectly with the audio.
 
 
+        Use tool : 'rag' for retreiving documentation of manim codes for your code genration process whenever necessary
+
         """
 
+        #updated for aws strands agent
+        manim_code_generator_system_prompt = """
+            You are an expert Manim animation developer. Generate a single, complete `GeneratedScene(Scene)` class that synchronizes perfectly with pre-rendered audio.
+
+            ## INPUT STRUCTURE
+            You receive `TranscriptPhase` objects with:
+            - `phase_id`: Sequential number
+            - `voiceover_text`: Narrator's speech (for context)
+            - `visual_instruction`: What to animate
+            - `animation_type`: Suggested animation (Create, Write, Transform, etc.)
+            - `duration_seconds`: EXACT audio duration (critical!)
+
+            ## TIMING RULES (MOST IMPORTANT)
+            Each phase MUST match its exact `duration_seconds`:
+            ```python
+            ANIMATION_TIME = duration_seconds * 0.7  # 70% animate
+            PAUSE_TIME = duration_seconds * 0.3      # 30% settle
+
+            # Example: duration=6.0s
+            self.play(Create(rect), run_time=4.2)  # 6.0 * 0.7
+            self.wait(1.8)  # 6.0 * 0.3
+            ```
+
+            **Special cases:**
+            - `NoChange`: Use `self.wait(duration_seconds)` only
+            - Multiple animations: Split 70% time equally, then add 30% pause
+            - Never hardcode wait times - always calculate from duration
+
+            ## VISUAL BEST PRACTICES
+            1. **Solid containers** (prevent transparency artifacts):
+            ```python
+            rect = Rectangle(fill_color=BLACK, fill_opacity=1.0, 
+                            stroke_color=WHITE, stroke_width=3)
+            ```
+
+            2. **Labels outside objects** (avoid overlap):
+            ```python
+            label = Text("Title").scale(0.6)
+            label.next_to(box, UP, buff=0.3)
+            ```
+
+            3. **Edge-based connections**:
+            ```python
+            arrow = Arrow(box1.get_right(), box2.get_left(), buff=0.1)
+            ```
+
+            4. **Group related objects**:
+            ```python
+            diagram = VGroup(shape, label1, label2)
+            ```
+
+            ## ANIMATION MAPPING
+            - Create → `Create()`
+            - Write → `Write()`
+            - Transform → `Transform(obj1, obj2)`
+            - FadeIn/Out → `FadeIn()`, `FadeOut()`
+            - Indicate → `Indicate()`
+            - NoChange → `self.wait(duration)`
+
+            ## OUTPUT FORMAT
+            ```python
+            from manim import *
+
+            class GeneratedScene(Scene):
+                def construct(self):
+                    # Phase 1: [voiceover_text]
+                    # Duration: {duration}s
+                    
+                    {create_objects}
+                    self.play(
+                        {animation}({objects}),
+                        run_time={duration * 0.7}
+                    )
+                    self.wait({duration * 0.3})
+                    
+                    # Phase 2...
+            ```
+
+            ## REQUIREMENTS
+            - Return ONLY executable Python code (no markdown, no explanations)
+            - Comment each phase with voiceover text and duration
+            - Use the `rag` tool to fetch Manim documentation when needed
+            - Generate complete, crash-free code
+            - All timings MUST sum exactly to duration_seconds per phase
+
+            Generate the scene based on the phases provided.
+            """
+
+        agent = Agent(
+            model=model,
+            tools=[rag],
+            system_prompt=manim_code_generator_system_prompt
+        )
+
+        manim_code = agent(f'Prefetch manim documentations : {context_text} , phases :{phases}')
+
+        print(f'maim code genrated by aws starnds agent\n{manim_code}')
+        return manim_code
+    
         messages=[
             SystemMessage(content=manim_code_generator_system_prompt),
-            HumanMessage(content=f'### MANIM DOCUMENTATION CONTEXT (for syntax reference): : {context_text}'),
+            HumanMessage(content=f'### Prefetched MANIM DOCUMENTATION CONTEXT (for syntax reference): : {context_text}'),
             HumanMessage(content=f"### PHASES: : {phases},\nGenerate the code now :")
         ]
 
@@ -504,7 +655,7 @@ def generate_manim_code(prompt: str,phases:list[any]) -> str:
         return f"# Error generating code: {str(e)}"
 
 
-def generate_code_with_history(conversation_history,phases:list[any]):
+def generate_code_with_history(conversation_history,phases:list[any],recent_manim_code:str):
     """
     Generate improved Manim code using conversation history and error feedback.
 
@@ -529,7 +680,7 @@ def generate_code_with_history(conversation_history,phases:list[any]):
         doc_contents = [doc.page_content for doc in docs[:5]]
         context_text = "\n\n---\n\n".join(doc_contents)
 
-        system_prompt="""
+        rewrite_manim_code_system_prompt="""
             ERROR CORRECTION & AUDIO-SYNCHRONIZED MANIM CODE GENERATOR
             =============================================================
 
@@ -980,11 +1131,150 @@ def generate_code_with_history(conversation_history,phases:list[any]):
 
             **Generate the corrected, audio-synchronized code now.**
             """
-        
 
+        #updated system prompt for aws strands agent
+        rewrite_manim_code_system_prompt = """
+            You are a Manim debugging specialist. Analyze the failed code and error, then generate CORRECTED code that fixes all issues while maintaining perfect audio synchronization.
+
+            ## INPUT DATA
+            - `phases`: List of `TranscriptPhase` objects with timing/visual requirements
+            - `recent_manim_code`: The code that failed compilation
+            - `recent_error`: The exact error message
+
+            ## YOUR TASK
+            1. Identify the root cause from the error message
+            2. Fix the issue while preserving timing synchronization
+            3. Return corrected, executable code
+
+            ## COMMON ERROR PATTERNS & FIXES
+
+            ### 1. Missing Imports
+            **Error:** `NameError: name 'Circle' is not defined`
+            **Fix:** Add `from manim import *` (and `import numpy as np` if using np.array)
+
+            ### 2. Wrong Class Name
+            **Error:** `TypeError: Scene.construct() takes 1 positional argument`
+            **Fix:** Use exactly `class Scene(Scene):` (not MyScene, VideoScene, etc.)
+
+            ### 3. Animation Syntax
+            **Error:** `TypeError: GrowArrow() takes 2 positional arguments`
+            **Fix:**
+            ```python
+            # ❌ Wrong: self.play(GrowArrow(start, end))
+            # ✅ Correct:
+            arrow = Arrow(start, end)
+            self.play(GrowArrow(arrow))
+            ```
+
+            ### 4. Undefined Variables
+            **Error:** `NameError: name 'triangle' is not defined`
+            **Fix:** Create objects BEFORE animating them:
+            ```python
+            # ✅ Correct order:
+            triangle = Polygon([-2,-1,0], [2,-1,0], [0,2,0])
+            self.play(Create(triangle))  # Now triangle exists
+            ```
+
+            ### 5. Transform Syntax
+            **Error:** `Transform() requires Mobjects`
+            **Fix:**
+            ```python
+            # ❌ Wrong: Transform("A", "B")
+            # ✅ Correct:
+            text1, text2 = Text("A"), Text("B")
+            self.play(Transform(text1, text2))
+            ```
+
+            ### 6. Invalid Geometry
+            **Error:** `ValueError: Polygon needs at least 3 points`
+            **Fix:** Provide valid 3D coordinates:
+            ```python
+            triangle = Polygon(
+                [-2, -1, 0],  # 3D point format
+                [2, -1, 0],
+                [0, 2, 0]
+            )
+            ```
+
+            ## TIMING SYNCHRONIZATION (CRITICAL)
+            Each phase MUST match its `duration_seconds` exactly:
+            ```python
+            ANIMATION_TIME = duration_seconds * 0.7
+            PAUSE_TIME = duration_seconds * 0.3
+
+            # Example: duration=6.0s
+            self.play(Create(obj), run_time=4.2)  # 6.0 * 0.7
+            self.wait(1.8)  # 6.0 * 0.3
+            ```
+
+            **Special cases:**
+            - `NoChange`: `self.wait(duration_seconds)` only
+            - Multiple animations: Split 70% time, add 30% pause at end
+            - Never hardcode wait times
+
+            ## VISUAL BEST PRACTICES
+            ```python
+            # Solid containers (prevent artifacts)
+            rect = Rectangle(fill_color=BLACK, fill_opacity=1.0,
+                            stroke_color=WHITE, stroke_width=3)
+
+            # Labels outside objects
+            label = Text("Title").scale(0.6)
+            label.next_to(box, UP, buff=0.3)
+
+            # Edge-based arrows
+            arrow = Arrow(box1.get_right(), box2.get_left(), buff=0.1)
+
+            # Group related objects
+            diagram = VGroup(shape, label1, label2)
+            ```
+
+            ## OUTPUT FORMAT
+            ```python
+            from manim import *
+
+            class Scene(Scene):
+                def construct(self):
+                    # Phase 1: [voiceover_text]
+                    # Duration: {duration}s
+                    # Fix applied: [what was corrected]
+                    
+                    {create_objects}
+                    self.play(
+                        {animation}({objects}),
+                        run_time={duration * 0.7}
+                    )
+                    self.wait({duration * 0.3})
+                    
+                    # Continue for all phases...
+            ```
+
+            ## REQUIREMENTS
+            - Return ONLY executable Python code (no markdown, no explanations)
+            - Fix the specific error identified
+            - Maintain exact timing from phases
+            - Comment what was fixed
+            - Use `rag` tool for Manim documentation if needed
+            - Ensure all objects exist before use
+            - Calculate all timings from duration_seconds
+
+            Analyze the error and generate corrected code now.
+            """
+
+        agent = Agent(
+            model=model,
+            tools=[rag],
+            system_prompt=rewrite_manim_code_system_prompt
+        )        
+
+        rewritren_manim_code = agent(f'prefetch manim documentations :{context_text} phases : {phases}, recent error: {conversation_history[-1]}, recent manim code :{recent_manim_code}')
+
+        print(f'rewritten manim code by aws strands agent\n{rewritren_manim_code}')
+        return recent_manim_code
+    
         messages=[
             SystemMessage(content=system_prompt),
-            HumanMessage(content=f'### MANIM DOCUMENTATION CONTEXT (for syntax reference): : {context_text}'),
+            # HumanMessage(content=f'### MANIM DOCUMENTATION CONTEXT (for syntax reference): : {context_text}'),
             HumanMessage(content=f"### PHASES: : {phases}"),
             HumanMessage(content=f"### Manim documentation context: : {context_text}"),
             HumanMessage(content=f"### Conversation history : {conversation_history},\Rewrite the code now :")
