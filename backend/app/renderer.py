@@ -7,14 +7,96 @@ import shutil
 from .config import settings
 from .generator import generate_manim_code
 from .supabase_client import update_job_data, upload_to_supabase
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage,SystemMessage
+from langchain_cohere import ChatCohere
+from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_core.prompts import (
+    ChatPromptTemplate,
+    MessagesPlaceholder,
+    SystemMessagePromptTemplate,
+    HumanMessagePromptTemplate,
+)
+from io import BytesIO
+import wave
+import math
+from pydub import AudioSegment
+import re
+import json
+import math
+from cartesia import Cartesia,AsyncCartesia
+import asyncio
+from pydantic import BaseModel, Field
+from typing import List,Optional
+import ffmpeg
+from typing import Any, Dict
+
+class TranscriptPhase(BaseModel):
+    phase_id: int = Field(
+        description="Sequential phase number starting from 1"
+    )
+
+    voiceover_text: str = Field(
+        description="Exact narration text to be spoken by the voiceover"
+    )
+
+    visual_instruction: str = Field(
+        description=(
+            "Detailed Manim visual instructions describing objects, "
+            "positions, labels, colors, and spatial relationships"
+        )
+    )
+
+    animation_type: Optional[str] = Field(
+        default=None,
+        description="Manim animation type used to introduce or modify visuals, keep it '' if no animation_type given"
+    )
+
+    duration_seconds: Optional[float] = None
+
+class ManimSynchronizedTranscript(BaseModel):
+    """
+    The complete plan for generating a synchronized Manim + voiceover video.
+    """
+
+    phases: List[TranscriptPhase] = Field(
+        description="Ordered list of synchronized narration and visual phases"
+    )
+
+
+class TTSFinalTranscript(BaseModel):
+    """
+    Phase-by-phase TTS-ready transcripts with embedded SSML timing.
+    Each phase corresponds to one visual scene in the Manim animation.
+    """
+    phasewise_transcripts: List[str] = Field(
+        description=(
+            "List of TTS-ready strings, one per phase. Each string contains "
+            "the voiceover text with SSML <break> tags for natural pacing. "
+            "Order matches the phase_id sequence from ManimSynchronizedTranscript."
+        )
+    )
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 RENDER_DIR = settings.RENDER_DIR
-MAX_ITERATIONS = 5
+MAX_ITERATIONS = 3
 
+chat = ChatGoogleGenerativeAI(
+    model="gemini-2.5-flash",
+    verbose=True,
+    google_api_key=settings.GEMINI_API_KEY
+)
+
+# chat = ChatCohere(
+#     model="command-r-plus-08-2024", 
+#     verbose=True,
+#     cohere_api_key=settings.COHERE_API_KEY,
+#     temperature=0.3 
+# )
+
+llm_with_structured_output = chat.with_structured_output(ManimSynchronizedTranscript)
 
 def run_manim(code: str, temp_dir: str, quality: str = "m") -> tuple[bool, str]:
     """
@@ -104,8 +186,83 @@ def run_manim(code: str, temp_dir: str, quality: str = "m") -> tuple[bool, str]:
                     f"Failed to clean up temporary file {temp_path}: {str(e)}"
                 )
 
+def normalize_word(text):
+    """
+    Removes punctuation and converts to lowercase for easy matching.
+    Example: "Let's!" -> "lets"
+    """
+    return re.sub(r'[^\w]', '', text).lower()
 
-def process_rendering_job(job_id: str, prompt: str, quality: str):
+def map_timestamps_to_phases(phases_json, cartesia_timestamps):
+    """
+    Inputs:
+        phases_json: List of dicts (from your LLM Step 2)
+        cartesia_timestamps: List of dicts [{'word': 'Hello', 'start': 0.1, 'end': 0.3}, ...]
+    
+    Returns:
+        The phases_json with a new 'audio_duration' key in each object.
+    """
+    
+    current_ts_index = 0
+    total_timestamps = len(cartesia_timestamps)
+
+    for phase in phases_json:
+        text = phase.get('voiceover_text', "")
+        
+        # 1. Clean the text into a list of checkable words
+        # "Let's start." -> ["lets", "start"]
+        target_words = [normalize_word(w) for w in text.split()]
+        
+        # Filter out empty strings
+        target_words = [w for w in target_words if w]
+
+        if not target_words:
+            # If phase has no text (just silence), default to 2s or 0s
+            phase['audio_duration'] = 2.0
+            continue
+
+        # 2. Capture Start Time
+        # The start of this phase is the start time of the next available word in the stream
+        if current_ts_index < total_timestamps:
+            start_time = cartesia_timestamps[current_ts_index]['start']
+        else:
+            phase['audio_duration'] = 2.0
+            continue
+
+        # 3. Advance the cursor through the timestamp list
+        # We look for the words in this phase to "consume" them from the master list
+        matches_found = 0
+        
+        for target_word in target_words:
+            # Search forward in the timestamp list until we find a match
+            # This handles cases where Cartesia might split words differently
+            while current_ts_index < total_timestamps:
+                ts_word = normalize_word(cartesia_timestamps[current_ts_index]['word'])
+                current_ts_index += 1
+                
+                if ts_word == target_word: # Found a match!
+                    matches_found += 1
+                    break # Move to next target word
+                
+                # If words don't match, we skip the timestamp word (it might be a filler or noise)
+        
+        # 4. Capture End Time
+        # The end of this phase is the 'end' time of the LAST word we consumed
+        # We use (current_ts_index - 1) because the loop incremented it one extra time
+        if current_ts_index > 0:
+            end_time = cartesia_timestamps[current_ts_index - 1]['end']
+        else:
+            end_time = start_time + 2.0
+
+        # 5. Calculate Duration & Add Buffer
+        duration = end_time - start_time
+        
+        # CRITICAL: Add 0.5s buffer so the animation doesn't snap instantly to the next one
+        phase['audio_duration'] = round(duration + 0.5, 2)
+
+    return phases_json
+
+async def process_rendering_job(job_id: str, prompt: str, quality: str):
     """
     Process a rendering job from start to finish with iterative error correction:
     1. Generate Manim code
@@ -120,13 +277,321 @@ def process_rendering_job(job_id: str, prompt: str, quality: str):
     conversation_history = []
     conversation_history.append(HumanMessage(content=prompt))
 
+    #####################
+    # tutor_transcript_generator_system_prompt = """
+    # You are an expert Educational Scriptwriter for short, animated explainer videos. 
+    # Your task is to take a simple user topic (e.g., "Area of a Triangle") and generate a high-quality, engaging voiceover transcript.
+
+    # ### YOUR GOAL
+    # Write a clear, concise, and conversational script that a Text-to-Speech (TTS) engine will read. The script must explain the concept step-by-step.
+
+    # ### CRITICAL WRITING RULES:
+    # 1.  **Pure Spoken Audio Only:** Do NOT include scene descriptions, camera directions, or visual cues like [Draw Triangle] or (Pause). Write ONLY what the voice should say.
+    # 2.  **"Visual-Ready" Language:** Write as if the viewer is looking at the screen. Use pointing language:
+    #     * *Good:* "Look at this shape here." / "Notice how the height connects to the base."
+    #     * *Bad:* "Imagine a triangle." (No, we are showing it).
+    #     * *Bad:* "I am now drawing a red line." (Don't describe the action, explain the concept).
+    # 3.  **Pacing:** Break the text into short, logical paragraphs. Each paragraph will eventually become a distinct animation phase.
+    # 4.  **Tone:** Enthusiastic, clear, and beginner-friendly. Avoid overly complex jargon unless you explain it.
+    # 5.  **Length:** Keep it focused. Target a duration of 30-60 seconds (approx. 75-150 words).
+
+    # ### OUTPUT FORMAT
+    # Return the transcript as plain text, separated by double newlines for logical pauses.
+
+    # ### EXAMPLE INPUT:
+    # "Explain the Pythagorean Theorem"
+
+    # ### EXAMPLE OUTPUT:
+    # "Let's look at a right-angled triangle. This creates a unique relationship between its three sides.
+
+    # We call the two shorter sides 'a' and 'b', and the longest side, opposite the right angle, is the hypotenuse, 'c'.
+
+    # Now, imagine we build a square on each of these sides. The theorem tells us something fascinating about their areas.
+
+    # The area of square 'a' plus the area of square 'b' is exactly equal to the area of square 'c'. This is why we say a-squared plus b-squared equals c-squared."
+    # """
+
+    # messages = [
+    #     SystemMessage(content=tutor_transcript_generator_system_prompt),
+    #     HumanMessage(content=prompt)
+    # ]
+
+    # tutor_transcript = chat.invoke(messages)
+
+    # print(f'tutor_transcript : {tutor_transcript.content}')
+
+    # manim_synchronized_transcript_system_prompt = """
+    #     You are the **Visual Director** for an automated video generation pipeline. 
+    #     Your input is an educational voiceover transcript.
+    #     Your output is a structured **JSON** directive that maps every chunk of audio to a specific, concrete visual instruction for a Manim animator.
+
+    #     ### YOUR CORE RESPONSIBILITY
+    #     The Manim Animator (the next agent) is a blind coder. It does not understand "show the concept." 
+    #     You must tell it EXACTLY:
+    #     1. **WHAT** to draw (Shape, Color, Label).
+    #     2. **WHERE** to place it (Coordinates, Relative Position).
+    #     3. **HOW** to move it (Animation type).
+
+    #     ### CRITICAL RULES FOR VISUAL INSTRUCTIONS
+
+    #     1.  **Layout & Flow (The "Anti-Overlap" Rule):**
+    #         * Establish a visual flow (usually Left-to-Right).
+    #         * **Explicit Positioning:** Never say "place it next to it." Say "Position this group to the RIGHT of the [Previous Object] with a buffer of 2.0 units."
+    #         * **Memory:** Keep track of what is on screen. Do not ask to create an object that already exists. Refer to existing objects by name.
+
+    #     2.  **Container Style (The "Transparency" Fix):**
+    #         * If the visual involves a Box, Circle, or Container, explicitly instruct: "Style: Fill Color BLACK, Opacity 1.0, colored stroke."
+    #         * This prevents lines from showing through objects.
+
+    #     3.  **Labeling Strategy:**
+    #         * Instruct the animator to place labels **OUTSIDE** objects (Above/Below), never inside, to leave room for animations.
+    #         * If multiple labels are needed, instruct them to **STACK** (e.g., "Place label B above Label A").
+
+    #     4.  **Geometry & Attachment:**
+    #         * If attaching shapes (e.g., squares on a triangle), specify the **Exact Edge** (e.g., "Attach to the Hypotenuse/Slanted Edge", "Attach to the Bottom Edge").
+
+    #     ### JSON OUTPUT FORMAT
+    #     You must return a raw JSON list of objects. Each object represents one "Scene Phase".
+
+    #     ```json
+    #     [
+    #     {
+    #         "phase_id": 1,
+    #         "voiceover_text": "Let's start with a right-angled triangle.",
+    #         "visual_instruction": "Create a Right Triangle in the center. Labels: 'a' (bottom), 'b' (left), 'c' (hypotenuse). Style: White lines.",
+    #         "animation_type": "Create/Write"
+    #     },
+    #     {
+    #         "phase_id": 2,
+    #         "voiceover_text": "Now, we attach a square to side 'a'.",
+    #         "visual_instruction": "Create a Square. Position: Attached to the BOTTOM edge of the triangle. Color: Green with Black Fill. Label: 'a²' inside the square.",
+    #         "animation_type": "GrowFromEdge"
+    #     }
+    #     ]```
+
+    #     INPUT TRANSCRIPT:
+    #     {transcript}
+
+    #     OUTPUT:
+    #     Generate ONLY the valid JSON list. 
+
+    # """
+
+    # messages=[
+    #     SystemMessage(content=manim_synchronized_transcript_system_prompt),
+    #     HumanMessage(content=f'tutor_transcript is : {tutor_transcript.content}'),
+    #     HumanMessage(content=prompt)
+    # ]
+
+    # #TODO : add with_structured_output for better reliability on llm calls
+
+    # manim_synchronized_transcript = llm_with_structured_output.invoke(messages)
+    # phases=manim_synchronized_transcript.phases
+    # print(f'manim_synchronized_transcript : {manim_synchronized_transcript.phases}')
+
+    # tts_final_transcript_generator_system_prompt = """
+    #    You are the **TTS Transcript Optimizer** for an educational video pipeline.
+
+    #     ### YOUR ROLE
+    #     Transform phase-by-phase educational narration into TTS-ready transcripts with precise timing controls.
+
+    #     ### INPUT
+    #     You receive a `ManimSynchronizedTranscript` object containing:
+    #     - `phase_id`: Sequential phase number
+    #     - `voiceover_text`: The raw narration for this phase
+    #     - `visual_instruction`: Description of what's being animated (used to determine pause duration)
+    #     - `animation_type`: Type of Manim animation (e.g., Create, Write, Transform)
+
+    #     ### YOUR TASK
+    #     Generate a list of TTS-ready strings, ONE STRING PER PHASE, with SSML break tags inserted for natural pacing.
+
+    #     ### CRITICAL RULES
+
+    #     1. **One-to-One Mapping**: Output exactly ONE transcript string for each input phase, in the same order.
+
+    #     2. **SSML Break Placement**: Insert `<break>` tags WITHIN each phase based on:
+    #     - **Sentence boundaries**: Add `<break time="0.4s"/>` after sentences
+    #     - **Clause breaks**: Add `<break time="0.3s"/>` after commas or logical pauses
+    #     - **Complex visuals**: If `visual_instruction` mentions multiple objects or transformations, add `<break time="0.6s"/>` after key statements
+    #     - **End-of-phase**: Add `<break time="1.0s"/>` at the END of each phase string to allow the animation to complete
+
+    #     3. **Timing Guidelines**:
+    #     - Simple animations (Create, Write): 0.3-0.5s pauses
+    #     - Complex animations (Transform, Multiple objects): 0.6-1.0s pauses
+    #     - End of phase: Always 1.0s minimum
+
+    #     4. **Natural Speech Flow**: 
+    #     - Break long sentences into digestible chunks with micro-pauses
+    #     - Don't over-pause—maintain conversational rhythm
+    #     - Add emphasis pauses before key concepts
+
+    #     5. **Output Format**: 
+    #     - Return ONLY the structured data (will be handled by `with_structured_output`)
+    #     - Each string is pure TTS content—no phase numbers, no metadata
+    #     - Do NOT wrap in `<speak>` tags (TTS engine handles that)
+
+    #     ### EXAMPLE
+
+    #     **Input Phases:**
+    #     ```
+    #     Phase 1:
+    #     voiceover_text: "Let's start with a right-angled triangle."
+    #     visual_instruction: "Create a Right Triangle in center with labels a, b, c"
+    #     animation_type: "Create"
+
+    #     Phase 2:
+    #     voiceover_text: "Now we attach a square to each side and see something amazing."
+    #     visual_instruction: "Create 3 Squares attached to each edge, colored differently"
+    #     animation_type: "GrowFromEdge"
+    #     ```
+
+    #     **Correct Output:**
+    #     ```json
+    #     {
+    #     "phasewise_transcripts": [
+    #         "Let's start with a right-angled triangle. <break time='1.0s'/>",
+    #         "Now we attach a square to each side <break time='0.4s'/> and see something amazing. <break time='1.0s'/>"
+    #     ]
+    #     }
+    #     ```
+
+    #     ### WHAT TO AVOID
+    #     - ❌ Combining multiple phases into one string
+    #     - ❌ Adding conversational filler ("Here's the transcript...")
+    #     - ❌ Including phase numbers in the output
+    #     - ❌ Forgetting the end-of-phase pause
+    #     - ❌ Using markdown code blocks
+
+    #     ### REMEMBER
+    #     Your output will be directly fed to a TTS engine. Every word you include will be spoken. Every pause you add will be heard.
+    #     """
+    
+    # messages=[
+    #     SystemMessage(content=tts_final_transcript_generator_system_prompt),
+    #     # HumanMessage(content=f'tutor_transcript is : {tutor_transcript.content}'),
+    #     HumanMessage(content=f'manim_synchornized_transcript is : {manim_synchronized_transcript.phases}'),
+    # ]
+
+    # llm_with_tts_output = chat.with_structured_output(TTSFinalTranscript)
+
+    # tts_final_transcript = llm_with_tts_output.invoke(messages)
+
+    # print(f'tts_final_transcript phasewise : {tts_final_transcript.phasewise_transcripts}')
+
+    # cartesia_client = Cartesia(api_key=os.getenv("CARTESIA_API_KEY"))
+    # cnt=0
+
+    # phasewise_transcripts=tts_final_transcript.phasewise_transcripts
+
+    # local_audio_files_name="temp"
+    # final_audio_filename=local_audio_files_name+'_final.wav'
+    # combined = AudioSegment.silent(duration=0)  # start empty
+    # errors=[]
+
+    # #audio generation
+    # for transcript in phasewise_transcripts:
+    #     #########################
+
+    #     chunks = cartesia_client.tts.bytes(
+    #         model_id="sonic-3",
+    #         transcript=transcript,
+    #         voice={"mode": "id", "id": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"},
+    #         language="en",
+    #         output_format={
+    #             "container": "wav",
+    #             "sample_rate": 44100,
+    #             "encoding": "pcm_s16le"
+    #             }
+    #     )
+
+    #     filename = f"{local_audio_files_name}_{cnt}.wav"
+
+    #     with open(filename, "wb") as f:
+    #         for chunk in chunks:
+    #             f.write(chunk)
+
+    #     sample_rate=44100
+    #     audio_seg_tts = AudioSegment.from_file(filename)
+    #     duration_seconds = len(audio_seg_tts) / 1000.0  # milliseconds to seconds
+    #     floored_time = math.ceil(duration_seconds)
+    #     phases[cnt].duration_seconds=floored_time
+    #     silence_time_sec = floored_time-duration_seconds
+
+    #     print(f"{filename}: {duration_seconds:.2f} seconds")  # Real duration![web:29]
+
+    #     silence_time_ms = int(silence_time_sec * 1000)
+    #     silence_seg = AudioSegment.silent(duration=silence_time_ms, frame_rate=sample_rate)
+    #     combined += audio_seg_tts + silence_seg
+    #     print(f"{filename}: {duration_seconds:.2f} seconds")
+    #     cnt += 1
+
+    # combined.export(final_audio_filename, format="wav")
+    # print("Final audio saved as:", final_audio_filename)
+    # print(f'phases now : {phases}')
+
+
+    #temp
+    final_audio_filename="temp_final.wav"
+    errors=[]
+#     tutor_transcript=""" Let's explore the fascinating world of straight lines! When you look at a line, you might think it's just a simple connection between two points. But there's more to it!
+
+# Straight lines have some unique properties. First, they are always the shortest distance between two points. Imagine drawing a line from one dot to another; it will always be a straight path.
+
+# Another cool fact is that straight lines continue forever in both directions. They don't curve or bend; they just go on and on. So, a straight line has no beginning or end!
+
+# In math, we often use equations to describe these lines. For example, y equals 2x plus 3 is a simple equation of a straight line. Each line has its own unique equation, which tells us how it behaves on a graph.
+
+# So, remember, straight lines are not just simple connections; they have some pretty amazing characteristics!"""
+
+#     # manim_synchronized_transcript=manim_synchronized_transcript : [TranscriptPhase(phase_id=1, voiceover_text="Let's explore the concept of the volume of a cone, a fascinating three-dimensional shape.", visual_instruction="Create a 3D Cone in the center. Style: Transparent with a Blue outline. Label: 'Cone' below the object.", animation_type='Create', duration_seconds=None), TranscriptPhase(phase_id=2, voiceover_text='Look at this cone here. It has a circular base and a curved surface that narrows to a point, called the apex.', visual_instruction="Zoom in on the base of the cone. Highlight the circular base with a Yellow outline. Label: 'Base' inside the circle. Then, animate a line from the base to the apex, and highlight the curved surface with a Green outline. Label: 'Apex' near the top point.", animation_type='ZoomIn/Highlight', duration_seconds=None), TranscriptPhase(phase_id=3, voiceover_text='The volume of a cone is one-third of the volume of a cylinder with the same base and height.', visual_instruction="Create a Cylinder with the same base radius and height as the cone, positioned to the RIGHT of the cone. Style: Transparent with a Dashed Red outline. Label: 'Cylinder' below it.", animation_type='Create', duration_seconds=None), TranscriptPhase(phase_id=4, voiceover_text='So, if you imagine a cylinder with the same base radius and height, its volume will be three times that of the cone.', visual_instruction="Animate a division of the cylinder into three equal parts along its height. Label: '1/3' inside each section. Then, highlight one section with a Bright Blue fill color.", animation_type='Divide/Highlight', duration_seconds=None), TranscriptPhase(phase_id=5, voiceover_text='The formula is: Volume = (1/3) * pi * radius^2 * height. Here, pi is a mathematical constant, approximately equal to 3.14.', visual_instruction="Write the formula to the RIGHT of the cylinder. Label: 'Volume Formula' above the equation. Highlight 'pi' in Yellow.", animation_type='Write', duration_seconds=None), TranscriptPhase(phase_id=6, voiceover_text='By using this formula, we can easily find the volume of any cone, making it a handy tool for real-world applications, from engineering to cooking!', visual_instruction="Create a small 3D Cone with a different color (Orange) near the formula. Label: 'Real-World Cone' below it. Animate a measuring tape wrapping around the cone's base and height, then display the calculated volume above the cone.", animation_type='Create/Animate', duration_seconds=None)]
+
+#     tts_final_transcript= ["Let's explore the concept of the volume of a cone, a fascinating three-dimensional shape. <break time='1.0s'/>", "Look at this cone here. It has a circular base and a curved surface that narrows to a point, called the apex. <break time='0.6s'/> We'll zoom in to see this more clearly. <break time='1.0s'/>", "Now, let's bring in a cylinder with the same base and height as the cone. <break time='0.6s'/> Imagine this cylinder right next to our cone. <break time='1.0s'/>", "The volume of this cylinder is three times that of the cone. <break time='0.4s'/> We can divide the cylinder into three equal parts to visualize this. <break time='1.0s'/>", "The formula for the volume of a cone is one-third of this cylinder's volume. <break time='0.3s'/> It's given by: Volume equals one-third times pi times radius squared times height. <break time='0.6s'/> Pi, a mathematical constant, is approximately 3.14. <break time='1.0s'/>", "Using this formula, we can calculate the volume of any cone. <break time='0.3s'/> For instance, let's consider a smaller cone here. <break time='0.6s'/> We can measure its base and height and find its volume. <break time='1.0s'/>"]
+#     phases = """[
+#     TranscriptPhase(``
+#         phase_id=1,
+#         voiceover_text="Let’s explore the idea of a straight line, one of the simplest shapes in mathematics.",
+#         visual_instruction="Create a straight horizontal line at the center of the screen. Style: Thin white line. Label: 'Straight Line' above it.",
+#         animation_type='Create',
+#         duration_seconds=5
+#     ),
+#     TranscriptPhase(
+#         phase_id=2,
+#         voiceover_text="A straight line shows the shortest distance between two points.",
+#         visual_instruction="Create two dots at the ends of the line. Label them 'Point A' and 'Point B'. Highlight the straight line connecting them. Briefly show a curved path between the points and fade it out.",
+#         animation_type='Create/Highlight',
+#         duration_seconds=7
+#     ),
+#     TranscriptPhase(
+#         phase_id=3,
+#         voiceover_text="Straight lines do not curve or bend. They keep the same direction.",
+#         visual_instruction="Change the straight line color to yellow. Create a curved line below it for comparison. Label the curved line 'Not Straight', then fade the curved line out.",
+#         animation_type='Highlight/Compare',
+#         duration_seconds=6
+#     ),
+#     TranscriptPhase(
+#         phase_id=4,
+#         voiceover_text="In math, straight lines can be described using equations, like y equals m x plus b.",
+#         visual_instruction="Write the equation 'y = mx + b' near the line. Label 'm' as slope and 'b' as starting point using small arrows.",
+#         animation_type='Write',
+#         duration_seconds=7
+#     )
+# ]"""
+
+    phases=""" [TranscriptPhase(phase_id=1, voiceover_text="Let's explore the area of a cube! Imagine we want to paint this whole cube. We need to know its total surface area.", visual_instruction="Create a 3D Cube in the center of the screen. Style: White lines, transparent faces. Add a subtle 'paint brush' icon near the cube, suggesting painting.", animation_type='Create', duration_seconds=None), TranscriptPhase(phase_id=2, voiceover_text="A cube is a special 3D shape where all its sides, or 'faces,' are identical squares. Look closely: how many faces does it have? Six!", visual_instruction="Rotate the existing Cube slightly to show different faces. Highlight each face sequentially (1, 2, 3, 4, 5, 6) with a distinct color (e.g., Red fill with 0.5 opacity), and display a counter 'Face X of 6' above the cube as each face is highlighted.", animation_type='Indicate', duration_seconds=None), TranscriptPhase(phase_id=3, voiceover_text="Each of these six faces is a perfect square. If one side of a square face measures 's', then the area of just one face is 's' multiplied by 's', which we write as 's-squared'.", visual_instruction="Extract one face of the Cube. Create a 2D Square representing this face, positioned to the LEFT of the screen. Label the bottom side and the left side of this square with 's'. Below the square, display the text 'Area of one face = s * s = s²'.", animation_type='Transform', duration_seconds=None), TranscriptPhase(phase_id=4, voiceover_text="Since all six faces are exactly the same size, to find the total surface area of the cube, we simply multiply the area of one face by six. So, the formula is 6 times 's-squared'! That's how much paint you'd need!", visual_instruction="Bring back the original 3D Cube to the center. Remove the 's²' square. Position the text 'Total Surface Area = 6 * s²' below the cube. Add a small 'paint bucket' icon next to the formula to reinforce the painting concept.", animation_type='FadeIn', duration_seconds=None)]
+tts_final_transcript phasewise : ["Let's explore the area of a cube! <break time='0.4s'/> Imagine we want to paint this whole cube. <break time='0.4s'/> We need to know its total surface area. <break time='1.0s'/>", "A cube is a special 3D shape where all its sides, or 'faces,' are identical squares. <break time='0.6s'/> Look closely: <break time='0.3s'/> how many faces does it have? <break time='0.4s'/> Six! <break time='1.0s'/>", "Each of these six faces is a perfect square. <break time='0.4s'/> If one side of a square face measures 's', <break time='0.3s'/> then the area of just one face is 's' multiplied by 's', <break time='0.3s'/> which we write as 's-squared'. <break time='1.0s'/>", "Since all six faces are exactly the same size, <break time='0.3s'/> to find the total surface area of the cube, we simply multiply the area of one face by six. <break time='0.6s'/> So, the formula is 6 times 's-squared'! <break time='0.4s'/> That's how much paint you'd need! <break time='1.0s'/>"]"""
+
     try:
-        code = generate_manim_code(prompt)
-        conversation_history.append(AIMessage(content=code))
+        manim_code = generate_manim_code(
+            prompt=prompt, 
+            phases=phases
+        )
+        print(f'-------------------Manim code Try 1 -------\n{manim_code}\n')
+        # code = generate_manim_code(prompt,manim_synchronized_transcript.content)
+        conversation_history.append(AIMessage(content=manim_code))
 
         code_path = os.path.join(job_dir, "code.py")
         with open(code_path, "w") as f:
-            f.write(code)
+            f.write(manim_code)
 
         logger.info(f"Initial code generated for job {job_id}")
     except Exception as e:
@@ -143,7 +608,7 @@ def process_rendering_job(job_id: str, prompt: str, quality: str):
 
     success = False
     result = ""
-    final_code = code
+    final_code = manim_code
     iteration = 0
 
     while not success and iteration < MAX_ITERATIONS:
@@ -176,18 +641,19 @@ def process_rendering_job(job_id: str, prompt: str, quality: str):
             else:
                 if iteration < MAX_ITERATIONS:
                     error_prompt = f"""
-The Manim code failed to render with the following error:
-```
-{result}
-```
-Please fix the code to address this error. Only respond with the complete, corrected code - no explanations.
-"""
+                    The Manim code failed to render with the following error:
+                    ```
+                    {result}
+                    ```
+                    Please fix the code to address this error. Only respond with the complete, corrected code - no explanations.
+                    """
+                    errors.append(error_prompt)
                     conversation_history.append(HumanMessage(content=error_prompt))
 
                     try:
                         from .generator import generate_code_with_history
 
-                        final_code = generate_code_with_history(conversation_history)
+                        final_code = generate_code_with_history(errors,phases,final_code)
                         conversation_history.append(AIMessage(content=final_code))
 
                         with open(
@@ -204,7 +670,7 @@ Please fix the code to address this error. Only respond with the complete, corre
                         break
         finally:
             try:
-                shutil.rmtree(temp_iter_dir)
+                # shutil.rmtree(temp_iter_dir)
                 logger.info(f"Cleaned up temporary directory: {temp_iter_dir}")
             except Exception as e:
                 logger.warning(
@@ -216,7 +682,26 @@ Please fix the code to address this error. Only respond with the complete, corre
     if success:
         try:
             video_full_path = os.path.join(RENDER_DIR, result)
-            supabase_url = upload_to_supabase(job_id, video_full_path, final_code)
+            final_video_with_audio = os.path.join(RENDER_DIR, "final_with_audio.mp4")
+            input_video = ffmpeg.input(video_full_path)
+            input_audio = ffmpeg.input(final_audio_filename)
+
+            (
+                ffmpeg
+                .output(
+                    input_video,
+                    input_audio,
+                    final_video_with_audio,
+                    vcodec="copy",   # do not re-encode video
+                    acodec="aac",    # encode audio to AAC for mp4 container
+                    strict="experimental"
+                )
+                .overwrite_output()
+                .run()
+            )
+
+            # now upload final_video_with_audio to Supabase
+            supabase_url = upload_to_supabase(job_id, final_video_with_audio, final_code)
 
             update_job_data(
                 job_id=job_id,

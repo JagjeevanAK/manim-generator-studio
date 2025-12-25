@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     SUPABASE_KEY: Optional[str] = os.getenv("SUPABASE_KEY")
     SUPABASE_BUCKET: Optional[str] = os.getenv("SUPABASE_BUCKET")
     GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
+    COHERE_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
     MANIM_QUALITY: Optional[str] = "m"
     MANIM_TIMEOUT: int = int(os.getenv("MANIM_TIMEOUT", "600"))
     PINECONE_API_KEY: Optional[str] = os.getenv("PINECONE_API_KEY")
@@ -20,6 +21,8 @@ class Settings(BaseSettings):
     LANGCHAIN_API_KEY: Optional[str] = os.getenv("LANGCHAIN_API_KEY")
     LANGCHAIN_TRACING_V2: Optional[str] = os.getenv("LANGCHAIN_TRACING_V2")
     LANGCHAIN_PROJECT: Optional[str] = os.getenv("LANGCHAIN_PROJECT")
+    CARTESIA_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
+    OPENROUTER_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
 
     class Config:
         env_file = ".env"

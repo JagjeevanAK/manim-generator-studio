@@ -3,6 +3,8 @@
 # Manim Generator Studio - Development Script
 # This script helps with common development tasks
 
+#TODO add latex as system deps for rendering latex 
+
 set -e
 
 # Colors for output
@@ -53,8 +55,18 @@ setup() {
     # Create renders directory
     mkdir -p renders
     
+    # Install System Dependencies (Linux Only)
+    if command -v apt-get &> /dev/null; then
+        print_message "Detected Linux. Installing system libraries for Manim..."
+        sudo apt-get update && sudo apt-get install -y libcairo2-dev libpango1.0-dev ffmpeg pkg-config 
+    else
+        print_warning "Not on Linux/Debian. Skipping apt-get. Ensure Manim dependencies are installed manually."
+    fi
+
+
     # Install dependencies
     print_message "Installing dependencies with uv..."
+    sudo apt-get update && sudo apt-get install -y libcairo2-dev libpango1.0-dev ffmpeg pkg-config
     uv sync
     
     print_message "Setup complete!"
