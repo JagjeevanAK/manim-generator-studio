@@ -3,6 +3,8 @@
 # Manim Generator Studio - Development Script
 # This script helps with common development tasks
 
+#TODO add latex as system deps for rendering latex 
+
 set -e
 
 # Colors for output

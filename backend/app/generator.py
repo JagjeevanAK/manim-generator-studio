@@ -13,13 +13,18 @@ from langchain_core.prompts import (
 from langchain_pinecone import PineconeVectorStore
 from strands import Agent,tool
 from strands.models.litellm import LiteLLMModel
+from strands.models.gemini import GeminiModel
+from pydantic import BaseModel
+
+class ManimCodeStucture(BaseModel):
+    code:str
 
 model = LiteLLMModel(
     client_args={
         "api_key":settings.OPENROUTER_API_KEY,
     },
-    # model_id="openrouter/openai/gpt-4o",
-    model_id="openrouter/openai/gpt-4.5",
+    model_id="openrouter/openai/gpt-4o",
+    # model_id="openrouter/openai/gpt-4.5",
     # model_id="openrouter/google/gemini-2.0-flash-lite-001",
     # model_id="openrouter/google/gemini-2.0-flash-exp:free",
     # model_id="openrouter/google/gemini-2.0-flash-001",
@@ -29,6 +34,19 @@ model = LiteLLMModel(
         "max_tokens":2000
     },
 )
+
+
+# model = GeminiModel(
+#     client_args={"api_key": settings.GEMINI_API_KEY},
+#     model_id="gemini-2.5-flash-lite",  # Or "gemini-pro", etc.
+#     params={
+#         "temperature": 0.3,
+#         "max_output_tokens": 2048,
+#         "top_p": 0.9
+#     }
+# )
+
+
 
 # model = LiteLLMModel(
 #     client_args={
@@ -95,44 +113,47 @@ def extract_python_code(text: str) -> str:
     return matches[0] if matches else text
 
 
-# @tool
+@tool
 def rag(queries:str):
     """Rag tool on manim documentations
 
     Args: 
         queries: str with all the queries for RAG
     """
-    doc_search = PineconeVectorStore(
-        index_name=settings.PINECONE_INDEX_NAME,
-        embedding=embedding,
-        pinecone_api_key=settings.PINECONE_API_KEY,
-    )
+    try:
+        doc_search = PineconeVectorStore(
+            index_name=settings.PINECONE_INDEX_NAME,
+            embedding=embedding,
+            pinecone_api_key=settings.PINECONE_API_KEY,
+        )
 
-    retriever = doc_search.as_retriever()
+        retriever = doc_search.as_retriever()
 
-    docs_original = retriever.invoke()
+        docs_enhanced = retriever.invoke(queries)
 
-    docs_enhanced = retriever.invoke(queries)
+        all_docs = docs_enhanced
+        unique_docs = []
+        seen_content = set()
 
-    all_docs = docs_original + docs_enhanced
-    unique_docs = []
-    seen_content = set()
+        for doc in all_docs:
+            if doc.page_content not in seen_content:
+                seen_content.add(doc.page_content)
+                unique_docs.append(doc)
 
-    for doc in all_docs:
-        if doc.page_content not in seen_content:
-            seen_content.add(doc.page_content)
-            unique_docs.append(doc)
+        doc_contents = []
+        for doc in unique_docs[:7]:
+            doc_contents.append(doc.page_content)
 
-    doc_contents = []
-    for doc in unique_docs[:7]:
-        doc_contents.append(doc.page_content)
-
-    return unique_docs
+        print(f'Returning from rag tool : {un}')
+        return unique_docs
+    except Exception as e:
+        print(f'Errro : rag : {r}')
+        return "Nothing found"
 
 def generate_manim_code(prompt: str,phases:list[any]) -> str:
     """Generate Manim code using Cohere model with improved retrieval context."""
     add_message_to_history(HumanMessage(content=prompt))
-
+    print(f'Inside generate manim code')
     query_enhancement_prompt = """
         You are a Manim Library Search Optimizer. 
         Your task is to generate a precise search query for the Manim documentation based on the User's Topic AND the specific Visual Plan.
@@ -207,201 +228,165 @@ def generate_manim_code(prompt: str,phases:list[any]) -> str:
 
       
         #updated for aws strands agent
-        manim_code_generator_system_prompt = """
-            You are an expert Manim animation developer. Generate a single, complete `GeneratedScene(Scene)` class that synchronizes perfectly with pre-rendered audio.
-            IMP : return FINAL code ONLY direct python ! not in ```python code```
+        # manim_code_generator_system_prompt = """
+        #     You are an expert Manim animation developer. Generate a single, complete `GeneratedScene(Scene)` class that synchronizes perfectly with pre-rendered audio.
+        #     IMP : return FINAL code ONLY direct python ! not in ```python code```
 
-            ## INPUT STRUCTURE
-            You receive `TranscriptPhase` objects with:
-            - `phase_id`: Sequential number
-            - `voiceover_text`: Narrator's speech (for context)
-            - `visual_instruction`: What to animate
-            - `animation_type`: Suggested animation (Create, Write, Transform, etc.)
-            - `duration_seconds`: EXACT audio duration (critical!)
+        #     ## INPUT STRUCTURE
+        #     You receive `TranscriptPhase` objects with:
+        #     - `phase_id`: Sequential number
+        #     - `voiceover_text`: Narrator's speech (for context)
+        #     - `visual_instruction`: What to animate
+        #     - `animation_type`: Suggested animation (Create, Write, Transform, etc.)
+        #     - `duration_seconds`: EXACT audio duration (critical!)
 
-            ## TIMING RULES (MOST IMPORTANT)
-            Each phase MUST match its exact `duration_seconds`:
-                ANIMATION_TIME = duration_seconds * 0.7  # 70% animate
-            PAUSE_TIME = duration_seconds * 0.3      # 30% settle
+        #     ## TIMING RULES (MOST IMPORTANT)
+        #     Each phase MUST match its exact `duration_seconds`:
+        #         ANIMATION_TIME = duration_seconds * 0.7  # 70% animate
+        #     PAUSE_TIME = duration_seconds * 0.3      # 30% settle
 
-            # Example: duration=6.0s
-            self.play(Create(rect), run_time=4.2)  # 6.0 * 0.7
-            self.wait(1.8)  # 6.0 * 0.3
-            IMP : return FINAL code ONLY direct python ! not in ```python code```
+        #     # Example: duration=6.0s
+        #     self.play(Create(rect), run_time=4.2)  # 6.0 * 0.7
+        #     self.wait(1.8)  # 6.0 * 0.3
+        #     IMP : return FINAL code ONLY direct python ! not in ```python code```
             
 
-            **Special cases:**
-            - `NoChange`: Use `self.wait(duration_seconds)` only
-            - Multiple animations: Split 70% time equally, then add 30% pause
-            - Never hardcode wait times - always calculate from duration
+        #     **Special cases:**
+        #     - `NoChange`: Use `self.wait(duration_seconds)` only
+        #     - Multiple animations: Split 70% time equally, then add 30% pause
+        #     - Never hardcode wait times - always calculate from duration
 
-            ## VISUAL BEST PRACTICES
-            1. **Solid containers** (prevent transparency artifacts):
-                rect = Rectangle(fill_color=BLACK, fill_opacity=1.0, 
-                            stroke_color=WHITE, stroke_width=3)
+        #     ## VISUAL BEST PRACTICES
+        #     1. **Solid containers** (prevent transparency artifacts):
+        #         rect = Rectangle(fill_color=BLACK, fill_opacity=1.0, 
+        #                     stroke_color=WHITE, stroke_width=3)
             
 
-            2. **Labels outside objects** (avoid overlap):
-                label = Text("Title").scale(0.6)
-            label.next_to(box, UP, buff=0.3)
+        #     2. **Labels outside objects** (avoid overlap):
+        #         label = Text("Title").scale(0.6)
+        #     label.next_to(box, UP, buff=0.3)
             
 
-            3. **Edge-based connections**:
-                arrow = Arrow(box1.get_right(), box2.get_left(), buff=0.1)
+        #     3. **Edge-based connections**:
+        #         arrow = Arrow(box1.get_right(), box2.get_left(), buff=0.1)
             
 
-            4. **Group related objects**:
-                diagram = VGroup(shape, label1, label2)
+        #     4. **Group related objects**:
+        #         diagram = VGroup(shape, label1, label2)
             
 
-            ## ANIMATION MAPPING
-            - Create → `Create()`
-            - Write → `Write()`
-            - Transform → `Transform(obj1, obj2)`
-            - FadeIn/Out → `FadeIn()`, `FadeOut()`
-            - Indicate → `Indicate()`
-            - NoChange → `self.wait(duration)`
+        #     ## ANIMATION MAPPING
+        #     - Create → `Create()`
+        #     - Write → `Write()`
+        #     - Transform → `Transform(obj1, obj2)`
+        #     - FadeIn/Out → `FadeIn()`, `FadeOut()`
+        #     - Indicate → `Indicate()`
+        #     - NoChange → `self.wait(duration)`
 
-            ## OUTPUT FORMAT
-                from manim import *
+        #     ## OUTPUT FORMAT
+        #         from manim import *
 
-            class GeneratedScene(Scene):
-                def construct(self):
-                    # Phase 1: [voiceover_text]
-                    # Duration: {duration}s
+        #     class GeneratedScene(Scene):
+        #         def construct(self):
+        #             # Phase 1: [voiceover_text]
+        #             # Duration: {duration}s
                     
-                    {create_objects}
-                    self.play(
-                        {animation}({objects}),
-                        run_time={duration * 0.7}
-                    )
-                    self.wait({duration * 0.3})
+        #             {create_objects}
+        #             self.play(
+        #                 {animation}({objects}),
+        #                 run_time={duration * 0.7}
+        #             )
+        #             self.wait({duration * 0.3})
                     
-                    # Phase 2...
+        #             # Phase 2...
             
-            IMP : return FINAL code ONLY direct python ! not in ```python code```
+        #     IMP : return FINAL code ONLY direct python ! not in ```python code```
 
-            ## REQUIREMENTS
-            - Return ONLY executable Python code (no markdown, no explanations)
-            - Comment each phase with voiceover text and duration
-            - Use the `rag` tool to fetch Manim documentation when needed
-            - Generate complete, crash-free code
-            - All timings MUST sum exactly to duration_seconds per phase
+        #     ## REQUIREMENTS
+        #     - Return ONLY executable Python code (no markdown, no explanations)
+        #     - Comment each phase with voiceover text and duration
+        #     - Use the `rag` tool to fetch Manim documentation when needed
+        #     - Generate complete, crash-free code
+        #     - All timings MUST sum exactly to duration_seconds per phase
 
-            Generate the scene based on the phases provided.
+        #     Generate the scene based on the phases provided.
 
-            VERY VERY IMP : 
-            i. Only output final python code directly not even python
-            ii.Cross check at the end whether generated code has any overlapping part
-            OVERLAPPING parts damage the user experience and they are FORBIDDEN!
+        #     VERY VERY IMP : 
+        #     i. Only output final python code directly not even python
+        #     ii.Cross check at the end whether generated code has any overlapping part
+        #     OVERLAPPING parts damage the user experience and they are FORBIDDEN!
 
 
-            DO NOT USE LATEX ! no matter what 
+        #     DO NOT USE LATEX ! no matter what 
 
-            Do not assume any constants exist. Always define positions, coordinates, or objects before using them
+        #     Do not assume any constants exist. Always define positions, coordinates, or objects before using them
 
-            IMP : return FINAL code ! not in ```python ```
-            """
+        #     IMP : return FINAL code ! not in ```python ```
+        #     """
 
-        #compresses for aws strands agent
+        #compressed for aws strands agent
         manim_code_generator_system_prompt = """
-You are an expert Manim animation developer. Generate a single, complete Python scene class `GeneratedScene(Scene)` that perfectly synchronizes with the provided audio.  
+        You are an expert Manim animation developer. Generate a single, complete Python code with imports and class `GeneratedScene(Scene)` that perfectly synchronizes with the provided audio.  
 
-## INPUT
-- `phases`: List of TranscriptPhase objects with:
-  - `phase_id`: Sequential number
-  - `voiceover_text`: Narrator speech (for context)
-  - `visual_instruction`: What to animate
-  - `animation_type`: Suggested animation (Create, Write, Transform, etc.)
-  - `duration_seconds`: Exact audio duration (critical)
-
-## TIMING RULES
-- Each phase must match its `duration_seconds`:
-    - ANIMATION_TIME = duration_seconds * 0.7
-    - PAUSE_TIME = duration_seconds * 0.3
-- Special cases:
-    - `NoChange` → `self.wait(duration_seconds)`
-    - Multiple animations → split 70% time equally, then 30% pause
-- Never hardcode wait times; always calculate from duration
-
-## VISUAL BEST PRACTICES
-- Use solid rectangles for containers
-- Place labels outside objects to avoid overlap
-- Use edge-based arrows for connections
-- Group related objects using `VGroup`
-
-## ANIMATION MAPPING
-- Create → `Create()`
-- Write → `Write()`
-- Transform → `Transform(obj1, obj2)`
-- FadeIn/Out → `FadeIn()`, `FadeOut()`
-- Indicate → `Indicate()`
-- NoChange → `self.wait(duration)`
-
-## OUTPUT REQUIREMENTS
-- Return ONLY executable Python code (no markdown, no explanations, no LaTeX)
-- Comment each phase with `voiceover_text` and `duration_seconds`
-- Ensure no overlapping animations; overlapping is forbidden
-- Define all positions, coordinates, and objects before use
-- Generate complete, crash-free code
-- Cross-check timings and object creation
-
-Generate the scene now. Only output **final Python code**.
-"""
-
-
-        rewrite_manim_code_system_prompt = """
-        You are a Manim code debugging specialist. Your task is to analyze a failed Manim script and generate corrected, fully executable Python code that preserves timing and visual instructions.  
+       Output only plain Python code. Do not include any Markdown, code fences, or extra formatting.
+        Return a single, complete, executable Python file.
 
         ## INPUT
-        - `phases`: List of TranscriptPhase objects with `voiceover_text`, `visual_instruction`, `animation_type`, and `duration_seconds`.
-        - `recent_manim_code`: Code that failed to compile.
-        - `recent_error`: Exact error message.
+        - `phases`: List of TranscriptPhase objects with:
+        - `phase_id`: Sequential number
+        - `voiceover_text`: Narrator speech (for context)
+        - `visual_instruction`: What to animate
+        - `animation_type`: Suggested animation (Create, Write, Transform, etc.)
+        - `duration_seconds`: Exact audio duration (critical)
 
-        ## TASK
-        1. Identify the root cause from the error.
-        2. Correct the code while preserving timing synchronization:
-        - Animation time = duration_seconds * 0.7
-        - Pause time = duration_seconds * 0.3
-        3. Ensure all objects exist before use.
-        4. Follow phase instructions exactly.
-        5. Comment only what was fixed.
-
-        ## COMMON ERROR FIXES
-        - Missing imports → `from manim import *` (+ `import numpy as np` if needed)
-        - Wrong Scene class → `class Scene(Scene):`
-        - Animation syntax → Create objects first, then animate
-        - Undefined variables → Always define objects before animating
-        - Transform syntax → Transform(Mobject1, Mobject2)
-        - Invalid geometry → Use valid coordinates (Polygon needs ≥3 points)
+        ## TIMING RULES
+        - Each phase must match its `duration_seconds`:
+            - ANIMATION_TIME = duration_seconds * 0.7
+            - PAUSE_TIME = duration_seconds * 0.3
+        - Special cases:
+            - `NoChange` → `self.wait(duration_seconds)`
+            - Multiple animations → split 70% time equally, then 30% pause
+        - Never hardcode wait times; always calculate from duration
 
         ## VISUAL BEST PRACTICES
         - Use solid rectangles for containers
-        - Place labels outside objects
-        - Use edge-based arrows
-        - Group related objects with VGroup
+        - Place labels outside objects to avoid overlap
+        - Use edge-based arrows for connections
+        - Group related objects using `VGroup`
+
+        ## ANIMATION MAPPING
+        - Create → `Create()`
+        - Write → `Write()`
+        - Transform → `Transform(obj1, obj2)`
+        - FadeIn/Out → `FadeIn()`, `FadeOut()`
+        - Indicate → `Indicate()`
+        - NoChange → `self.wait(duration)`
 
         ## OUTPUT REQUIREMENTS
         - Return ONLY executable Python code (no markdown, no explanations, no LaTeX)
+        - Comment each phase with `voiceover_text` and `duration_seconds`
         - Ensure no overlapping animations; overlapping is forbidden
-        - Do not assume constants exist; define all positions and objects
+        - Define all positions, coordinates, and objects before use
+        - Generate complete, crash-free code
         - Cross-check timings and object creation
 
-        Generate the corrected code now. Only output **final Python code**.
+        Generate the scene now. Only output **final Python code**.!!
+        NOT ```python manim code```!!
         """
 
         agent = Agent(
             model=model,
             tools=[rag],
-            system_prompt=manim_code_generator_system_prompt
+            system_prompt=manim_code_generator_system_prompt,
+            # structured_output_model=ManimCodeStucture
         )
 
 
-        agent = Agent(
-            model=model,
-            tools=[], #temporary testing with cohere ai (cohere agent dont support tools in aws strands)
-            system_prompt=manim_code_generator_system_prompt
-        )
+        # agent = Agent(
+        #     model=model,
+        #     tools=[], #temporary testing with cohere ai (cohere agent dont support tools in aws strands)
+        #     system_prompt=manim_code_generator_system_prompt
+        # )
 
         response = agent(f'Prefetch manim documentations : {context_text} , phases :{phases}')
         print(f'\nresponse from code gen agent aws strands\n{response}\n')
@@ -409,8 +394,13 @@ Generate the scene now. Only output **final Python code**.
         manim_code = response.message["content"][0]["text"]  # {"role": "assistant", "content": [ ... ]}
 
         print(f'manim_code : {manim_code}')
+        manim_code = "\n".join(
+            line for line in manim_code.splitlines()
+            if not line.strip().startswith("```")
+        )
         return manim_code
-    
+        # return response.code
+
         messages=[
             SystemMessage(content=manim_code_generator_system_prompt),
             HumanMessage(content=f'### Prefetched MANIM DOCUMENTATION CONTEXT (for syntax reference): : {context_text}'),
@@ -441,6 +431,8 @@ def generate_code_with_history(errors,phases:list[any],recent_manim_code:str):
     Returns:
         str: Generated Python code
     """
+    print(f'Inside generate manim code with history')
+    
     try:
         # original_prompt = error_history[0].content
 
@@ -458,147 +450,148 @@ def generate_code_with_history(errors,phases:list[any],recent_manim_code:str):
 
      
         #updated system prompt for aws strands agent
-        rewrite_manim_code_system_prompt = """
-            You are a Manim debugging specialist. Analyze the failed code and error, then generate CORRECTED code that fixes all issues while maintaining perfect audio synchronization.
-            IMP : return FINAL code ONLY direct python ! not in ```python code```
+        # rewrite_manim_code_system_prompt = """
+        #     You are a Manim debugging specialist. Analyze the failed code and error, then generate CORRECTED code that fixes all issues while maintaining perfect audio synchronization.
+        #     IMP : return FINAL code ONLY direct python ! not in ```python code```
 
-            ## INPUT DATA
-            - `phases`: List of `TranscriptPhase` objects with timing/visual requirements
-            - `recent_manim_code`: The code that failed compilation
-            - `recent_error`: The exact error message
+        #     ## INPUT DATA
+        #     - `phases`: List of `TranscriptPhase` objects with timing/visual requirements
+        #     - `recent_manim_code`: The code that failed compilation
+        #     - `recent_error`: The exact error message
 
-            ## YOUR TASK
-            1. Identify the root cause from the error message
-            2. Fix the issue while preserving timing synchronization
-            3. Return corrected, executable code
+        #     ## YOUR TASK
+        #     1. Identify the root cause from the error message
+        #     2. Fix the issue while preserving timing synchronization
+        #     3. Return corrected, executable code
 
-            ## COMMON ERROR PATTERNS & FIXES
+        #     ## COMMON ERROR PATTERNS & FIXES
 
-                        IMP : return FINAL code ONLY direct python ! not in ```python code```
+        #                 IMP : return FINAL code ONLY direct python ! not in ```python code```
 
-            ### 1. Missing Imports
-            **Error:** `NameError: name 'Circle' is not defined`
-            **Fix:** Add `from manim import *` (and `import numpy as np` if using np.array)
+        #     ### 1. Missing Imports
+        #     **Error:** `NameError: name 'Circle' is not defined`
+        #     **Fix:** Add `from manim import *` (and `import numpy as np` if using np.array)
 
-            ### 2. Wrong Class Name
-            **Error:** `TypeError: Scene.construct() takes 1 positional argument`
-            **Fix:** Use exactly `class Scene(Scene):` (not MyScene, VideoScene, etc.)
+        #     ### 2. Wrong Class Name
+        #     **Error:** `TypeError: Scene.construct() takes 1 positional argument`
+        #     **Fix:** Use exactly `class Scene(Scene):` (not MyScene, VideoScene, etc.)
 
-            ### 3. Animation Syntax
-            **Error:** `TypeError: GrowArrow() takes 2 positional arguments`
-            **Fix:**
-                # ❌ Wrong: self.play(GrowArrow(start, end))
-            # ✅ Correct:
-            arrow = Arrow(start, end)
-            self.play(GrowArrow(arrow))
+        #     ### 3. Animation Syntax
+        #     **Error:** `TypeError: GrowArrow() takes 2 positional arguments`
+        #     **Fix:**
+        #         # ❌ Wrong: self.play(GrowArrow(start, end))
+        #     # ✅ Correct:
+        #     arrow = Arrow(start, end)
+        #     self.play(GrowArrow(arrow))
             
 
-            ### 4. Undefined Variables
-            **Error:** `NameError: name 'triangle' is not defined`
-            **Fix:** Create objects BEFORE animating them:
-                # ✅ Correct order:
-            triangle = Polygon([-2,-1,0], [2,-1,0], [0,2,0])
-            self.play(Create(triangle))  # Now triangle exists
+        #     ### 4. Undefined Variables
+        #     **Error:** `NameError: name 'triangle' is not defined`
+        #     **Fix:** Create objects BEFORE animating them:
+        #         # ✅ Correct order:
+        #     triangle = Polygon([-2,-1,0], [2,-1,0], [0,2,0])
+        #     self.play(Create(triangle))  # Now triangle exists
             
 
-            ### 5. Transform Syntax
-            **Error:** `Transform() requires Mobjects`
-            **Fix:**
-                # ❌ Wrong: Transform("A", "B")
-            # ✅ Correct:
-            text1, text2 = Text("A"), Text("B")
-            self.play(Transform(text1, text2))
+        #     ### 5. Transform Syntax
+        #     **Error:** `Transform() requires Mobjects`
+        #     **Fix:**
+        #         # ❌ Wrong: Transform("A", "B")
+        #     # ✅ Correct:
+        #     text1, text2 = Text("A"), Text("B")
+        #     self.play(Transform(text1, text2))
             
-            IMP : return FINAL code ONLY direct python ! not in ```python code```
+        #     IMP : return FINAL code ONLY direct python ! not in ```python code```
 
-            ### 6. Invalid Geometry
-            **Error:** `ValueError: Polygon needs at least 3 points`
-            **Fix:** Provide valid 3D coordinates:
-                triangle = Polygon(
-                [-2, -1, 0],  # 3D point format
-                [2, -1, 0],
-                [0, 2, 0]
-            )
-            
-
-            ## TIMING SYNCHRONIZATION (CRITICAL)
-            Each phase MUST match its `duration_seconds` exactly:
-                ANIMATION_TIME = duration_seconds * 0.7
-            PAUSE_TIME = duration_seconds * 0.3
-
-            # Example: duration=6.0s
-            self.play(Create(obj), run_time=4.2)  # 6.0 * 0.7
-            self.wait(1.8)  # 6.0 * 0.3
-
-            IMP : return FINAL code ONLY direct python ! not in ```python code```
+        #     ### 6. Invalid Geometry
+        #     **Error:** `ValueError: Polygon needs at least 3 points`
+        #     **Fix:** Provide valid 3D coordinates:
+        #         triangle = Polygon(
+        #         [-2, -1, 0],  # 3D point format
+        #         [2, -1, 0],
+        #         [0, 2, 0]
+        #     )
             
 
-            **Special cases:**
-            - `NoChange`: `self.wait(duration_seconds)` only
-            - Multiple animations: Split 70% time, add 30% pause at end
-            - Never hardcode wait times
+        #     ## TIMING SYNCHRONIZATION (CRITICAL)
+        #     Each phase MUST match its `duration_seconds` exactly:
+        #         ANIMATION_TIME = duration_seconds * 0.7
+        #     PAUSE_TIME = duration_seconds * 0.3
 
-            ## VISUAL BEST PRACTICES
-                # Solid containers (prevent artifacts)
-            rect = Rectangle(fill_color=BLACK, fill_opacity=1.0,
-                            stroke_color=WHITE, stroke_width=3)
+        #     # Example: duration=6.0s
+        #     self.play(Create(obj), run_time=4.2)  # 6.0 * 0.7
+        #     self.wait(1.8)  # 6.0 * 0.3
 
-            # Labels outside objects
-            label = Text("Title").scale(0.6)
-            label.next_to(box, UP, buff=0.3)
-
-            # Edge-based arrows
-            arrow = Arrow(box1.get_right(), box2.get_left(), buff=0.1)
-
-            # Group related objects
-            diagram = VGroup(shape, label1, label2)
+        #     IMP : return FINAL code ONLY direct python ! not in ```python code```
             
 
-            ## OUTPUT FORMAT
-                from manim import *
+        #     **Special cases:**
+        #     - `NoChange`: `self.wait(duration_seconds)` only
+        #     - Multiple animations: Split 70% time, add 30% pause at end
+        #     - Never hardcode wait times
 
-            class Scene(Scene):
-                def construct(self):
-                    # Phase 1: [voiceover_text]
-                    # Duration: {duration}s
-                    # Fix applied: [what was corrected]
+        #     ## VISUAL BEST PRACTICES
+        #         # Solid containers (prevent artifacts)
+        #     rect = Rectangle(fill_color=BLACK, fill_opacity=1.0,
+        #                     stroke_color=WHITE, stroke_width=3)
+
+        #     # Labels outside objects
+        #     label = Text("Title").scale(0.6)
+        #     label.next_to(box, UP, buff=0.3)
+
+        #     # Edge-based arrows
+        #     arrow = Arrow(box1.get_right(), box2.get_left(), buff=0.1)
+
+        #     # Group related objects
+        #     diagram = VGroup(shape, label1, label2)
+            
+
+        #     ## OUTPUT FORMAT
+        #         from manim import *
+
+        #     class Scene(Scene):
+        #         def construct(self):
+        #             # Phase 1: [voiceover_text]
+        #             # Duration: {duration}s
+        #             # Fix applied: [what was corrected]
                     
-                    {create_objects}
-                    self.play(
-                        {animation}({objects}),
-                        run_time={duration * 0.7}
-                    )
-                    self.wait({duration * 0.3})
+        #             {create_objects}
+        #             self.play(
+        #                 {animation}({objects}),
+        #                 run_time={duration * 0.7}
+        #             )
+        #             self.wait({duration * 0.3})
                     
-                    # Continue for all phases...
+        #             # Continue for all phases...
             
 
-            ## REQUIREMENTS
-            - Return ONLY executable Python code (no markdown, no explanations)
-            - Fix the specific error identified
-            - Maintain exact timing from phases
-            - Comment what was fixed
-            - Use `rag` tool for Manim documentation if needed
-            - Ensure all objects exist before use
-            - Calculate all timings from duration_seconds
+        #     ## REQUIREMENTS
+        #     - Return ONLY executable Python code (no markdown, no explanations)
+        #     - Fix the specific error identified
+        #     - Maintain exact timing from phases
+        #     - Comment what was fixed
+        #     - Use `rag` tool for Manim documentation if needed
+        #     - Ensure all objects exist before use
+        #     - Calculate all timings from duration_seconds
 
-            Analyze the error and generate corrected code now.
+        #     Analyze the error and generate corrected code now.
 
-            VERY VERY IMP :
-            i. Only output final python code directly not even python
-            ii.Cross check at the end whether generated code has any overlapping part
-            OVERLAPPING parts damage the user experience and they are FORBIDDEN!
+        #     VERY VERY IMP :
+        #     i. Only output final python code directly not even python
+        #     ii.Cross check at the end whether generated code has any overlapping part
+        #     OVERLAPPING parts damage the user experience and they are FORBIDDEN!
             
-            DO NOT USE LATEX ! no matter what 
-            Do not assume any constants exist. Always define positions, coordinates, or objects before using them
+        #     DO NOT USE LATEX ! no matter what 
+        #     Do not assume any constants exist. Always define positions, coordinates, or objects before using them
 
-            IMP : return FINAL code ONLY direct python ! not in ```python code```
-            """
+        #     IMP : return FINAL code ONLY direct python ! not in ```python code```
+        #     """
 
         #compresses for aws strands agent
-        rewrite_manim_code_system_prompt = """
+        rewrite_manim_code_system_prompt = """  
         You are a Manim code debugging specialist. Your task is to analyze a failed Manim script and generate corrected, fully executable Python code that preserves timing and visual instructions.  
-
+        Output only plain Python code. Do not include any Markdown, code fences, or extra formatting.
+        Return a single, complete, executable Python file.
         ## INPUT
         - `phases`: List of TranscriptPhase objects with `voiceover_text`, `visual_instruction`, `animation_type`, and `duration_seconds`.
         - `recent_manim_code`: Code that failed to compile.
@@ -633,29 +626,35 @@ def generate_code_with_history(errors,phases:list[any],recent_manim_code:str):
         - Do not assume constants exist; define all positions and objects
         - Cross-check timings and object creation
 
-        Generate the corrected code now. Only output **final Python code**.
+        Generate the scene now. Only output **final Python code**.!!
+        NOT ```python manim code```!!        
         """
-
 
         agent = Agent(
             model=model,
             tools=[rag],
-            system_prompt=rewrite_manim_code_system_prompt
+            system_prompt=rewrite_manim_code_system_prompt,
+            # structured_output_model=ManimCodeStucture
         )    
 
         #temporary testing with cohere ai agent with aws strands
-        agent = Agent(
-            model=model,
-            tools=[], #temporary testing with cohere ai (cohere agent dont support tools in aws strands)
-            system_prompt=rewrite_manim_code_system_prompt
-        )    
+        # agent = Agent(
+        #     model=model,
+        #     tools=[], #temporary testing with cohere ai (cohere agent dont support tools in aws strands)
+        #     system_prompt=rewrite_manim_code_system_prompt
+        # )    
         
         response = agent(f'phases : {phases},  recent error : {errors[-1]}, recent manim code :{recent_manim_code}, previous errros : {errors}')
         print(f'\noutput from rewrite manim code agent\n{response}\n')
         rewritren_manim_code=response.message["content"][0]["text"]
 
         print(f'rewritten manim code by aws strands agent\n{rewritren_manim_code}')
-        return recent_manim_code
+        rewritren_manim_code = "\n".join(
+            line for line in rewritren_manim_code.splitlines()
+            if not line.strip().startswith("```")
+        )
+        return rewritren_manim_code
+        # return response.code
     
         messages=[
             SystemMessage(content=system_prompt),
