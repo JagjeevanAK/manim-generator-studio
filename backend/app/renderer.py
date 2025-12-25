@@ -109,7 +109,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 RENDER_DIR = settings.RENDER_DIR
-MAX_ITERATIONS = 5
+MAX_ITERATIONS = 3
 
 chat = ChatCohere(
     model="command-r-plus-08-2024", 
@@ -303,7 +303,7 @@ async def process_rendering_job(job_id: str, prompt: str, quality: str):
     conversation_history = []
     conversation_history.append(HumanMessage(content=prompt))
 
-
+    #####################
     tutor_transcript_generator_system_prompt = """
     You are an expert Educational Scriptwriter for short, animated explainer videos. 
     Your task is to take a simple user topic (e.g., "Area of a Triangle") and generate a high-quality, engaging voiceover transcript.
@@ -515,46 +515,93 @@ async def process_rendering_job(job_id: str, prompt: str, quality: str):
     errors=[]
 
     #audio generation
-    # for transcript in phasewise_transcripts:
-    #     #########################
+    for transcript in phasewise_transcripts:
+        #########################
 
-    #     chunks = cartesia_client.tts.bytes(
-    #         model_id="sonic-3",
-    #         transcript=transcript,
-    #         voice={"mode": "id", "id": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"},
-    #         language="en",
-    #         output_format={
-    #             "container": "wav",
-    #             "sample_rate": 44100,
-    #             "encoding": "pcm_s16le"
-    #             }
-    #     )
+        chunks = cartesia_client.tts.bytes(
+            model_id="sonic-3",
+            transcript=transcript,
+            voice={"mode": "id", "id": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"},
+            language="en",
+            output_format={
+                "container": "wav",
+                "sample_rate": 44100,
+                "encoding": "pcm_s16le"
+                }
+        )
 
-    #     filename = f"{local_audio_files_name}_{cnt}.wav"
+        filename = f"{local_audio_files_name}_{cnt}.wav"
 
-    #     with open(filename, "wb") as f:
-    #         for chunk in chunks:
-    #             f.write(chunk)
+        with open(filename, "wb") as f:
+            for chunk in chunks:
+                f.write(chunk)
 
-    #     sample_rate=44100
-    #     audio_seg_tts = AudioSegment.from_file(filename)
-    #     duration_seconds = len(audio_seg_tts) / 1000.0  # milliseconds to seconds
-    #     floored_time = math.ceil(duration_seconds)
-    #     phases[cnt].duration_seconds=floored_time
-    #     silence_time_sec = floored_time-duration_seconds
+        sample_rate=44100
+        audio_seg_tts = AudioSegment.from_file(filename)
+        duration_seconds = len(audio_seg_tts) / 1000.0  # milliseconds to seconds
+        floored_time = math.ceil(duration_seconds)
+        phases[cnt].duration_seconds=floored_time
+        silence_time_sec = floored_time-duration_seconds
 
-    #     print(f"{filename}: {duration_seconds:.2f} seconds")  # Real duration![web:29]
+        print(f"{filename}: {duration_seconds:.2f} seconds")  # Real duration![web:29]
 
-    #     silence_time_ms = int(silence_time_sec * 1000)
-    #     silence_seg = AudioSegment.silent(duration=silence_time_ms, frame_rate=sample_rate)
-    #     combined += audio_seg_tts + silence_seg
-    #     print(f"{filename}: {duration_seconds:.2f} seconds")
-    #     cnt += 1
+        silence_time_ms = int(silence_time_sec * 1000)
+        silence_seg = AudioSegment.silent(duration=silence_time_ms, frame_rate=sample_rate)
+        combined += audio_seg_tts + silence_seg
+        print(f"{filename}: {duration_seconds:.2f} seconds")
+        cnt += 1
 
-    # combined.export(final_audio_filename, format="wav")
-    # print("Final audio saved as:", final_audio_filename)
-    # print(f'phases now : {phases}')
+    combined.export(final_audio_filename, format="wav")
+    print("Final audio saved as:", final_audio_filename)
+    print(f'phases now : {phases}')
 
+
+    #temp
+#     final_audio_filename="temp_final.wav"
+#     errors=[]
+#     tutor_transcript=""" Let's explore the fascinating world of straight lines! When you look at a line, you might think it's just a simple connection between two points. But there's more to it!
+
+# Straight lines have some unique properties. First, they are always the shortest distance between two points. Imagine drawing a line from one dot to another; it will always be a straight path.
+
+# Another cool fact is that straight lines continue forever in both directions. They don't curve or bend; they just go on and on. So, a straight line has no beginning or end!
+
+# In math, we often use equations to describe these lines. For example, y equals 2x plus 3 is a simple equation of a straight line. Each line has its own unique equation, which tells us how it behaves on a graph.
+
+# So, remember, straight lines are not just simple connections; they have some pretty amazing characteristics!"""
+
+#     # manim_synchronized_transcript=manim_synchronized_transcript : [TranscriptPhase(phase_id=1, voiceover_text="Let's explore the concept of the volume of a cone, a fascinating three-dimensional shape.", visual_instruction="Create a 3D Cone in the center. Style: Transparent with a Blue outline. Label: 'Cone' below the object.", animation_type='Create', duration_seconds=None), TranscriptPhase(phase_id=2, voiceover_text='Look at this cone here. It has a circular base and a curved surface that narrows to a point, called the apex.', visual_instruction="Zoom in on the base of the cone. Highlight the circular base with a Yellow outline. Label: 'Base' inside the circle. Then, animate a line from the base to the apex, and highlight the curved surface with a Green outline. Label: 'Apex' near the top point.", animation_type='ZoomIn/Highlight', duration_seconds=None), TranscriptPhase(phase_id=3, voiceover_text='The volume of a cone is one-third of the volume of a cylinder with the same base and height.', visual_instruction="Create a Cylinder with the same base radius and height as the cone, positioned to the RIGHT of the cone. Style: Transparent with a Dashed Red outline. Label: 'Cylinder' below it.", animation_type='Create', duration_seconds=None), TranscriptPhase(phase_id=4, voiceover_text='So, if you imagine a cylinder with the same base radius and height, its volume will be three times that of the cone.', visual_instruction="Animate a division of the cylinder into three equal parts along its height. Label: '1/3' inside each section. Then, highlight one section with a Bright Blue fill color.", animation_type='Divide/Highlight', duration_seconds=None), TranscriptPhase(phase_id=5, voiceover_text='The formula is: Volume = (1/3) * pi * radius^2 * height. Here, pi is a mathematical constant, approximately equal to 3.14.', visual_instruction="Write the formula to the RIGHT of the cylinder. Label: 'Volume Formula' above the equation. Highlight 'pi' in Yellow.", animation_type='Write', duration_seconds=None), TranscriptPhase(phase_id=6, voiceover_text='By using this formula, we can easily find the volume of any cone, making it a handy tool for real-world applications, from engineering to cooking!', visual_instruction="Create a small 3D Cone with a different color (Orange) near the formula. Label: 'Real-World Cone' below it. Animate a measuring tape wrapping around the cone's base and height, then display the calculated volume above the cone.", animation_type='Create/Animate', duration_seconds=None)]
+
+#     tts_final_transcript= ["Let's explore the concept of the volume of a cone, a fascinating three-dimensional shape. <break time='1.0s'/>", "Look at this cone here. It has a circular base and a curved surface that narrows to a point, called the apex. <break time='0.6s'/> We'll zoom in to see this more clearly. <break time='1.0s'/>", "Now, let's bring in a cylinder with the same base and height as the cone. <break time='0.6s'/> Imagine this cylinder right next to our cone. <break time='1.0s'/>", "The volume of this cylinder is three times that of the cone. <break time='0.4s'/> We can divide the cylinder into three equal parts to visualize this. <break time='1.0s'/>", "The formula for the volume of a cone is one-third of this cylinder's volume. <break time='0.3s'/> It's given by: Volume equals one-third times pi times radius squared times height. <break time='0.6s'/> Pi, a mathematical constant, is approximately 3.14. <break time='1.0s'/>", "Using this formula, we can calculate the volume of any cone. <break time='0.3s'/> For instance, let's consider a smaller cone here. <break time='0.6s'/> We can measure its base and height and find its volume. <break time='1.0s'/>"]
+#     phases = """[
+#     TranscriptPhase(``
+#         phase_id=1,
+#         voiceover_text="Let’s explore the idea of a straight line, one of the simplest shapes in mathematics.",
+#         visual_instruction="Create a straight horizontal line at the center of the screen. Style: Thin white line. Label: 'Straight Line' above it.",
+#         animation_type='Create',
+#         duration_seconds=5
+#     ),
+#     TranscriptPhase(
+#         phase_id=2,
+#         voiceover_text="A straight line shows the shortest distance between two points.",
+#         visual_instruction="Create two dots at the ends of the line. Label them 'Point A' and 'Point B'. Highlight the straight line connecting them. Briefly show a curved path between the points and fade it out.",
+#         animation_type='Create/Highlight',
+#         duration_seconds=7
+#     ),
+#     TranscriptPhase(
+#         phase_id=3,
+#         voiceover_text="Straight lines do not curve or bend. They keep the same direction.",
+#         visual_instruction="Change the straight line color to yellow. Create a curved line below it for comparison. Label the curved line 'Not Straight', then fade the curved line out.",
+#         animation_type='Highlight/Compare',
+#         duration_seconds=6
+#     ),
+#     TranscriptPhase(
+#         phase_id=4,
+#         voiceover_text="In math, straight lines can be described using equations, like y equals m x plus b.",
+#         visual_instruction="Write the equation 'y = mx + b' near the line. Label 'm' as slope and 'b' as starting point using small arrows.",
+#         animation_type='Write',
+#         duration_seconds=7
+#     )
+# ]"""
 
     try:
         manim_code = generate_manim_code(
@@ -629,7 +676,7 @@ async def process_rendering_job(job_id: str, prompt: str, quality: str):
                     try:
                         from .generator import generate_code_with_history
 
-                        final_code = generate_code_with_history(error_prompt,phases,final_code)
+                        final_code = generate_code_with_history(errors,phases,final_code)
                         conversation_history.append(AIMessage(content=final_code))
 
                         with open(
@@ -646,7 +693,7 @@ async def process_rendering_job(job_id: str, prompt: str, quality: str):
                         break
         finally:
             try:
-                shutil.rmtree(temp_iter_dir)
+                # shutil.rmtree(temp_iter_dir)
                 logger.info(f"Cleaned up temporary directory: {temp_iter_dir}")
             except Exception as e:
                 logger.warning(
